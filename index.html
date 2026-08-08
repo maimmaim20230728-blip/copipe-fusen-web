@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="app-version" content="0.1.2">
+<meta name="theme-color" content="#2EAD62">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="クリップメモ">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icons/icon180.png">
+<link rel="icon" type="image/png" sizes="32x32" href="./icons/icon32.png">
+<title>便利クリップメモ・そよぎ</title>
+<style>html, body { margin: 0; padding: 0; background: #f2f6f3; }</style>
+</head>
+<body>
+<script>
+/* Web版アダプタ: 拡張の background.js に相当する部分を localStorage で実装する。
+   UI(content.js)とロジック(store_logic.js)は拡張本体と共用(_sync_web.jsで同期)。
+   データはこの端末のブラウザ内にのみ保存され、外部送信は一切ない。 */
+window.__SOYOGI_FUSEN_WEB = true;
+(function () {
+  var KEY = 'benri-clip-memo-web';
+  var msgListeners = [];
+  var changeListeners = [];
+  var store = {};
+  try {
+    var saved = localStorage.getItem(KEY);
+    if (saved) store = JSON.parse(saved) || {};
+  } catch (e) {}
+
+  function persist() {
+    try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {}
+  }
+
+  function applySet(obj) {
+    var changes = {};
+    Object.keys(obj).forEach(function (k) {
+      changes[k] = { oldValue: store[k], newValue: obj[k] };
+      store[k] = obj[k];
+    });
+    persist();
+    setTimeout(function () {
+      changeListeners.forEach(function (f) { f(changes, 'local'); });
+    }, 0);
+  }
+
+  /* 拡張background.jsのhandleOpと同じ内容。
+     🔴 addClip/addMemoの保存先はop名で固定(msg.kind判定にしない) */
+  function handleOp(msg) {
+    var L = window.SoyogiFusenLogic;
+    var now = Date.now();
+    var kind = msg.kind === 'memo' ? 'memo' : 'clip';
+    var key = kind === 'memo' ? 'memos' : 'clips';
+    if (msg.op === 'addClip') key = 'clips';
+    if (msg.op === 'addMemo') key = 'memos';
+    var list = store[key] || [];
+    var next = list;
+    switch (msg.op) {
+      case 'addClip': next = L.addClip(list, msg.text, now); break;
+      case 'addMemo': next = L.addMemo(list, msg.text || '', msg.opts, now); break;
+      case 'updateText': next = L.updateItem(list, msg.id, { text: L.clampText(msg.text) }, true, now); break;
+      case 'setColor': next = L.updateItem(list, msg.id, { color: msg.color }, false, now); break;
+      case 'setTextColor': next = L.updateItem(list, msg.id, { textColor: msg.textColor }, false, now); break;
+      case 'togglePin':
+        next = list.map(function (it) {
+          return it.id === msg.id ? Object.assign({}, it, { pinned: !it.pinned }) : it;
+        });
+        break;
+      case 'remove': next = L.removeItem(list, msg.id); break;
+    }
+    var patch = {};
+    patch[key] = next;
+    applySet(patch);
+    return { ok: true };
+  }
+
+  window.chrome = {
+    runtime: {
+      onMessage: { addListener: function (f) { msgListeners.push(f); } },
+      sendMessage: function (msg) {
+        if (msg && msg.type === 'soyogi-fusen-op') {
+          return Promise.resolve(handleOp(msg));
+        }
+        if (msg && msg.type === 'soyogi-fusen-read-clipboard') {
+          /* ボタンタップの流れの中で直接readTextを呼ぶ(iPadはここで貼り付け確認が出る) */
+          if (navigator.clipboard && navigator.clipboard.readText) {
+            return navigator.clipboard.readText().then(
+              function (t) { return { ok: true, text: t }; },
+              function () { return { ok: false, text: '' }; }
+            );
+          }
+          return Promise.resolve({ ok: false, text: '' });
+        }
+        return Promise.resolve({ ok: true });
+      },
+      getURL: function (p) { return p; }
+    },
+    storage: {
+      local: {
+        get: function (defaults, cb) {
+          var res = Object.assign({}, defaults);
+          Object.keys(store).forEach(function (k) { res[k] = store[k]; });
+          setTimeout(function () { cb(res); }, 0);
+        },
+        set: function (obj, cb) {
+          applySet(obj);
+          if (cb) setTimeout(cb, 0);
+          return Promise.resolve();
+        }
+      },
+      onChanged: { addListener: function (f) { changeListeners.push(f); } }
+    },
+    windows: { getCurrent: function (cb) { cb(null); } }
+  };
+})();
+</script>
+<script src="./store_logic.js"></script>
+<script src="./content.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(function () {});
+}
+</script>
+</body>
+</html>
