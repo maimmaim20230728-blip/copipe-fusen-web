@@ -45,7 +45,7 @@
   /* ---------- スタイル ---------- */
   /* 🔴 パネルの最小サイズ。CSSと位置復元の両方で使う(片方だけ直すと、
         縮めても再表示で元に戻る不具合になる) */
-  var MIN_W = 190, MIN_H = 170;
+  var MIN_W = 100, MIN_H = 170;
 
   var CSS = [
     '* { box-sizing: border-box; margin: 0; padding: 0;',
@@ -153,6 +153,22 @@
     '  .hdr .iconbtn { margin-left: auto; }',
     '  .meta { flex-wrap: wrap; }',
     '  .meta .time { flex: 1 0 100%; margin-bottom: 3px; }',
+    '}',
+    /* 極細(半分幅)。ボタンが横に並ばないので縦積みにし、操作アイコンは折り返す */
+    '@container (max-width: 165px) {',
+    '  .toolbar { flex-direction: column; gap: 4px; padding: 5px 5px; }',
+    '  .btn { width: 100%; padding: 7px 4px; font-size: 11px; }',
+    '  .sortbox { max-width: none; width: 100%; font-size: 11px; padding: 3px 2px; }',
+    '  .tab { font-size: 11px; padding: 7px 1px; }',
+    '  .hdr { padding: 5px 6px; }',
+    '  .list { padding: 5px 5px 8px; gap: 5px; }',
+    '  .card { padding: 6px 6px; }',
+    '  .card .txt { font-size: 12px; }',
+    '  .card .txt.clamp { -webkit-line-clamp: 3; }',
+    /* 22pxなら100px幅でも3つ並ぶ(24pxだと2つで折り返して3段になる) */
+    '  .meta { gap: 2px; justify-content: flex-end; margin-top: 5px; }',
+    '  .iconbtn { width: 22px; height: 21px; font-size: 11px; }',
+    '  .toast { padding: 5px 8px; font-size: 11px; bottom: 8px; }',
     '}'
   ].join('\n');
 
