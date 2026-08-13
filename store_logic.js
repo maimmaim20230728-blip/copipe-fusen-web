@@ -148,6 +148,80 @@
     });
   }
 
+  /* ---- バックアップ(書き出し・読み込み) ---- */
+
+  var BACKUP_APP = 'benri-clip-memo';
+  var BACKUP_FORMAT = 1;
+
+  function isColorId(id) {
+    for (var i = 0; i < COLORS.length; i++) if (COLORS[i].id === id) return true;
+    return false;
+  }
+  function isTextColorId(id) {
+    for (var i = 0; i < TEXT_COLORS.length; i++) if (TEXT_COLORS[i].id === id) return true;
+    return false;
+  }
+
+  /* 外から来たデータは信用しない。1件ずつ形を整え、壊れていればnullを返す */
+  function sanitizeItem(raw, fallbackColor, now) {
+    if (!raw || typeof raw !== 'object') return null;
+    var text = clampText(raw.text == null ? '' : raw.text);
+    var ts = Number(raw.ts);
+    if (!isFinite(ts)) ts = now;
+    return {
+      id: (typeof raw.id === 'string' && raw.id) ? raw.id.slice(0, 64) : makeId(now),
+      text: text,
+      color: isColorId(raw.color) ? raw.color : fallbackColor,
+      textColor: isTextColorId(raw.textColor) ? raw.textColor : 'black',
+      pinned: !!raw.pinned,
+      ts: ts
+    };
+  }
+
+  function buildBackup(clips, memos, exportedAt) {
+    return {
+      app: BACKUP_APP,
+      format: BACKUP_FORMAT,
+      exportedAt: exportedAt,
+      clips: clips || [],
+      memos: memos || []
+    };
+  }
+
+  /* 読み込んだ文字列をバックアップとして解釈する。だめなら例外を投げる */
+  function parseBackup(text, now) {
+    var obj;
+    try { obj = JSON.parse(text); } catch (e) { throw new Error('ファイルの形式が違います'); }
+    if (!obj || typeof obj !== 'object') throw new Error('ファイルの形式が違います');
+    if (!Array.isArray(obj.clips) && !Array.isArray(obj.memos)) {
+      throw new Error('このアプリのバックアップではありません');
+    }
+    var pick = function (arr, fallbackColor) {
+      return (Array.isArray(arr) ? arr : [])
+        .map(function (r) { return sanitizeItem(r, fallbackColor, now); })
+        .filter(Boolean);
+    };
+    return { clips: pick(obj.clips, 'white'), memos: pick(obj.memos, 'yellow') };
+  }
+
+  /* 今の中身に足す(消さない)。同じidは重複させない */
+  function mergeItems(current, incoming, now) {
+    var cur = Array.isArray(current) ? current.slice() : [];
+    var have = {};
+    cur.forEach(function (it) { have[it.id] = true; });
+    var added = 0, skipped = 0;
+    (Array.isArray(incoming) ? incoming : []).forEach(function (raw) {
+      var it = sanitizeItem(raw, 'white', now);
+      if (!it) { skipped++; return; }
+      if (have[it.id]) { skipped++; return; }
+      have[it.id] = true;
+      cur.push(it);
+      added++;
+    });
+    var pruned = prune(cur);
+    return { list: pruned, added: added, skipped: skipped, dropped: cur.length - pruned.length };
+  }
+
   function colorHex(id) {
     for (var i = 0; i < COLORS.length; i++) if (COLORS[i].id === id) return COLORS[i].hex;
     return '#FFFFFF';
@@ -172,6 +246,10 @@
     updateItem: updateItem,
     removeItem: removeItem,
     sortForDisplay: sortForDisplay,
+    sanitizeItem: sanitizeItem,
+    buildBackup: buildBackup,
+    parseBackup: parseBackup,
+    mergeItems: mergeItems,
     colorHex: colorHex,
     textColorHex: textColorHex
   };

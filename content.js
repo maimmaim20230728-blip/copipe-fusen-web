@@ -23,7 +23,7 @@
   /* ---------- 状態 ---------- */
   var host = null, shadow = null, panelEl = null, listEl = null, toastEl = null;
   var tabClipsEl = null, tabMemosEl = null, btnImportEl = null, btnNewMemoEl = null;
-  var sortBoxEl = null;
+  var sortBoxEl = null, fileInputEl = null;
   var visible = false;
   var currentTab = 'clips';           // 'clips' | 'memos'
   var sortMode = { clips: 'new', memos: 'new' };   // タブごとに覚える
@@ -73,6 +73,8 @@
     '.panel.page-mode .hdr { cursor: default; }',
     '.hdr .ttl { font-weight: 700; font-size: 14px; color: #1b1b1b; flex: 1;',
     '  white-space: nowrap; overflow: hidden; }',
+    /* タイトルを隠す幅でも操作ボタンが右端に寄るようまとめておく */
+    '.hdr-actions { display: flex; gap: 4px; margin-left: auto; flex: none; }',
     '.iconbtn { border: none; background: rgba(255,255,255,.6); width: 30px; height: 28px;',
     '  border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1; padding: 0;',
     '  display: inline-flex; align-items: center; justify-content: center; color: #333; flex: none; }',
@@ -148,9 +150,7 @@
     '  .iconbtn { width: 26px; height: 25px; font-size: 13px; }',
     '}',
     '@container (max-width: 240px) {',
-    /* タイトルを隠すと✕が左に寄って間延びするので右端へ寄せ直す */
     '  .hdr .ttl { display: none; }',
-    '  .hdr .iconbtn { margin-left: auto; }',
     '  .meta { flex-wrap: wrap; }',
     '  .meta .time { flex: 1 0 100%; margin-bottom: 3px; }',
     '}',
@@ -169,6 +169,8 @@
     '  .meta { gap: 2px; justify-content: flex-end; margin-top: 5px; }',
     '  .iconbtn { width: 22px; height: 21px; font-size: 11px; }',
     '  .toast { padding: 5px 8px; font-size: 11px; bottom: 8px; }',
+    /* この幅でバックアップ操作はしないので隠す(広げれば出る) */
+    '  .bak { display: none; }',
     '}'
   ].join('\n');
 
@@ -309,6 +311,67 @@
     } catch (e) { fail(); }
   }
 
+  /* ---------- バックアップ(書き出し・読み込み) ---------- */
+
+  function ymd(d) {
+    var p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+
+  function doExport() {
+    try {
+      var now = new Date();
+      var text = JSON.stringify(L.buildBackup(data.clips, data.memos, now.toISOString()), null, 2);
+      var blob = new Blob([text], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'benri-clip-memo-backup-' + ymd(now) + '.json';
+      a.style.display = 'none';
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+      toast('書き出しました');
+    } catch (e) {
+      toast('書き出せませんでした');
+    }
+  }
+
+  /* 読み込みは「今の中身に足す」。消さないので、間違えても失わない */
+  function onImportFile() {
+    var f = fileInputEl.files && fileInputEl.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var parsed = null;
+      try {
+        parsed = L.parseBackup(String(reader.result), Date.now());
+      } catch (e) {
+        toast(String((e && e.message) || 'このファイルは読み込めません'));
+        fileInputEl.value = '';
+        return;
+      }
+      fileInputEl.value = '';
+      var p = sendOp({ op: 'importItems', clips: parsed.clips, memos: parsed.memos });
+      if (!p || !p.then) { toast('読み込みました'); return; }
+      p.then(function (res) {
+        var a = (res && res.addedClips) || 0;
+        var b = (res && res.addedMemos) || 0;
+        if (a + b === 0) {
+          toast('新しく増えるものはありませんでした');
+        } else {
+          toast('読み込みました（履歴' + a + '件・メモ' + b + '件）');
+        }
+      }, function () { toast('読み込めませんでした'); });
+    };
+    reader.onerror = function () {
+      toast('ファイルを開けませんでした');
+      fileInputEl.value = '';
+    };
+    reader.readAsText(f);
+  }
+
   /* ---------- データ読み込み・監視 ---------- */
   function loadData(cb) {
     try {
@@ -447,8 +510,13 @@
       '<div class="hdr" id="hdr">',
       '  <span class="logo">📋</span>',
       '  <span class="ttl">便利クリップメモ・そよぎ</span>',
-      '  <button class="iconbtn" id="btn-close" title="しまう(拡張機能アイコンで再表示)">✕</button>',
+      '  <span class="hdr-actions">',
+      '    <button class="iconbtn bak" id="btn-export" title="書き出し（今の中身をファイルに保存）">💾</button>',
+      '    <button class="iconbtn bak" id="btn-import-file" title="読み込み（保存したファイルから戻す）">📂</button>',
+      '    <button class="iconbtn" id="btn-close" title="しまう(拡張機能アイコンで再表示)">✕</button>',
+      '  </span>',
       '</div>',
+      '<input type="file" id="file-input" accept="application/json,.json" style="display:none">',
       '<div class="tabs">',
       '  <button class="tab" id="tab-clips"></button>',
       '  <button class="tab" id="tab-memos"></button>',
@@ -508,6 +576,13 @@
         }
       });
     }
+
+    fileInputEl = shadow.getElementById('file-input');
+    shadow.getElementById('btn-export').addEventListener('click', doExport);
+    shadow.getElementById('btn-import-file').addEventListener('click', function () {
+      fileInputEl.click();
+    });
+    fileInputEl.addEventListener('change', onImportFile);
 
     tabClipsEl.addEventListener('click', function () { switchTab('clips'); });
     tabMemosEl.addEventListener('click', function () { switchTab('memos'); });

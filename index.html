@@ -69,6 +69,16 @@ window.__SOYOGI_FUSEN_WEB = true;
         });
         break;
       case 'remove': next = L.removeItem(list, msg.id); break;
+      case 'importItems': {
+        /* clipsとmemosを1回の書き込みでまとめて足す(拡張のbackground.jsと同じ) */
+        var rc = L.mergeItems(store.clips || [], msg.clips || [], now);
+        var rm = L.mergeItems(store.memos || [], msg.memos || [], now);
+        applySet({ clips: rc.list, memos: rm.list });
+        return {
+          ok: true, addedClips: rc.added, addedMemos: rm.added,
+          skipped: rc.skipped + rm.skipped, dropped: rc.dropped + rm.dropped
+        };
+      }
     }
     var patch = {};
     patch[key] = next;
