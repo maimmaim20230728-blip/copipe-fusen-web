@@ -169,8 +169,8 @@
     '  .meta { gap: 2px; justify-content: flex-end; margin-top: 5px; }',
     '  .iconbtn { width: 22px; height: 21px; font-size: 11px; }',
     '  .toast { padding: 5px 8px; font-size: 11px; bottom: 8px; }',
-    /* この幅でバックアップ操作はしないので隠す(広げれば出る) */
-    '  .bak { display: none; }',
+    /* この幅でバックアップや窓の切り替えはしないので隠す(広げれば出る) */
+    '  .bak, .win { display: none; }',
     '}'
   ].join('\n');
 
@@ -309,6 +309,26 @@
         }
       }, fail);
     } catch (e) { fail(); }
+  }
+
+  /* ---------- 小窓で開く ---------- */
+
+  /* ブラウザのタブから独立した小さな窓に移す。
+     この窓はPWAと違って幅の下限に縛られないので、細長い付箋として置ける */
+  function openSmallWindow() {
+    try {
+      var p = chrome.runtime.sendMessage({ type: 'soyogi-fusen-open-window' });
+      if (p && p.then) {
+        p.then(function (res) {
+          if (res && res.ok) hidePanel();
+          else toast('小窓を開けませんでした');
+        }, function () { toast('小窓を開けませんでした'); });
+      } else {
+        hidePanel();
+      }
+    } catch (e) {
+      toast('小窓を開けませんでした');
+    }
   }
 
   /* ---------- バックアップ(書き出し・読み込み) ---------- */
@@ -511,6 +531,7 @@
       '  <span class="logo">📋</span>',
       '  <span class="ttl">便利クリップメモ・そよぎ</span>',
       '  <span class="hdr-actions">',
+      '    <button class="iconbtn win" id="btn-window" title="小窓で開く（ブラウザとは別の小さな窓にする）">🪟</button>',
       '    <button class="iconbtn bak" id="btn-export" title="書き出し（今の中身をファイルに保存）">💾</button>',
       '    <button class="iconbtn bak" id="btn-import-file" title="読み込み（保存したファイルから戻す）">📂</button>',
       '    <button class="iconbtn" id="btn-close" title="しまう(拡張機能アイコンで再表示)">✕</button>',
@@ -575,6 +596,14 @@
           hidePanel();
         }
       });
+    }
+
+    var winBtn = shadow.getElementById('btn-window');
+    if (IS_PAGE_MODE) {
+      /* すでに小窓(または全画面のWeb版)なので出さない */
+      winBtn.style.display = 'none';
+    } else {
+      winBtn.addEventListener('click', openSmallWindow);
     }
 
     fileInputEl = shadow.getElementById('file-input');
