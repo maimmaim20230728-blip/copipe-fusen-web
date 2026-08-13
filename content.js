@@ -23,8 +23,10 @@
   /* ---------- 状態 ---------- */
   var host = null, shadow = null, panelEl = null, listEl = null, toastEl = null;
   var tabClipsEl = null, tabMemosEl = null, btnImportEl = null, btnNewMemoEl = null;
+  var sortBoxEl = null;
   var visible = false;
   var currentTab = 'clips';           // 'clips' | 'memos'
+  var sortMode = { clips: 'new', memos: 'new' };   // タブごとに覚える
   var data = { clips: [], memos: [] };
   var savedPanelState = null;         // {left, top, width, height, tab}
   var editingId = null;               // 編集はcomposerと同じく状態駆動で描画する
@@ -41,13 +43,20 @@
   var resizeClampTimer = null;
 
   /* ---------- スタイル ---------- */
+  /* 🔴 パネルの最小サイズ。CSSと位置復元の両方で使う(片方だけ直すと、
+        縮めても再表示で元に戻る不具合になる) */
+  var MIN_W = 190, MIN_H = 170;
+
   var CSS = [
     '* { box-sizing: border-box; margin: 0; padding: 0;',
     '    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif; }',
     'button { -webkit-appearance: none; appearance: none; }',
     '.panel {',
     '  position: fixed; top: 16px; right: 16px; width: 380px; height: 540px;',
-    '  min-width: 300px; min-height: 280px; max-width: 96vw; max-height: 94vh;',
+    /* 狭くしても使えるよう、下の @container で表示を詰める */
+    '  min-width: ' + MIN_W + 'px; min-height: ' + MIN_H + 'px;',
+    '  max-width: 96vw; max-height: 94vh;',
+    '  container-type: inline-size;',
     '  background: #ffffff; border: 1px solid #c8d2cc; border-radius: 12px;',
     '  box-shadow: 0 8px 28px rgba(0,0,0,.28);',
     '  display: flex; flex-direction: column; overflow: hidden; resize: both;',
@@ -75,7 +84,12 @@
     '.tab { flex: 1; border: none; background: none; padding: 10px 4px; text-align: center;',
     '  cursor: pointer; font-size: 13px; color: #555; border-bottom: 3px solid transparent; }',
     '.tab.on { border-bottom-color: #2e9e5b; color: #1b6b3d; font-weight: 700; background: #fff; }',
-    '.toolbar { padding: 8px 10px; display: flex; gap: 8px; flex: none; background: #fff; }',
+    '.toolbar { padding: 8px 10px; display: flex; gap: 8px; flex: none; background: #fff;',
+    '  align-items: stretch; }',
+    '.sortbox { flex: none; max-width: 46%; border: 1px solid #c8d2cc; border-radius: 8px;',
+    '  background: #f7faf8; color: #1b6b3d; font-size: 12px; font-weight: 600;',
+    '  padding: 0 4px; cursor: pointer; }',
+    '.lbl-min { display: none; }',
     '.btn { flex: 1; border: none; background: #2e9e5b; color: #fff; font-size: 13px;',
     '  font-weight: 600; padding: 9px 10px; border-radius: 8px; cursor: pointer; }',
     '.btn:hover { background: #27874f; }',
@@ -109,8 +123,37 @@
     '  white-space: pre-line; }',
     '.toast { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);',
     '  background: #333; color: #fff; padding: 6px 16px; border-radius: 16px; font-size: 12px;',
-    '  opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap; }',
-    '.toast.show { opacity: .95; }'
+    '  opacity: 0; transition: opacity .2s; pointer-events: none;',
+    /* 🔴 nowrap+幅無制限だと狭いパネルで左右が切れて読めなくなる。折り返させる。
+          🔴 width:max-content が無いと left:50% 起点で使える幅が半分と見なされ、
+             細長く潰れて何行にもなる */
+    '  width: max-content; max-width: calc(100% - 24px);',
+    '  white-space: normal; word-break: break-word;',
+    '  text-align: center; line-height: 1.5; }',
+    '.toast.show { opacity: .95; }',
+
+    /* 🔴 @container は詳細度を上げないので、上書きしたい通常ルールより「後ろ」に
+          置かないと効かない。必ずCSSの最後に置くこと(前に置くと半分死ぬ) */
+    '@container (max-width: 330px) {',
+    '  .lbl-full { display: none; }',
+    '  .lbl-min { display: inline; }',
+    '  .toolbar { padding: 6px 7px; gap: 6px; }',
+    '  .btn { padding: 8px 6px; font-size: 12px; }',
+    '  .sortbox { font-size: 11px; }',
+    '  .hdr { padding: 7px 8px; gap: 5px; }',
+    '  .tab { padding: 8px 2px; font-size: 12px; }',
+    '  .list { padding: 6px 7px 10px; gap: 6px; }',
+    '  .card { padding: 7px 8px; }',
+    '  .meta .time { font-size: 10px; }',
+    '  .iconbtn { width: 26px; height: 25px; font-size: 13px; }',
+    '}',
+    '@container (max-width: 240px) {',
+    /* タイトルを隠すと✕が左に寄って間延びするので右端へ寄せ直す */
+    '  .hdr .ttl { display: none; }',
+    '  .hdr .iconbtn { margin-left: auto; }',
+    '  .meta { flex-wrap: wrap; }',
+    '  .meta .time { flex: 1 0 100%; margin-bottom: 3px; }',
+    '}'
   ].join('\n');
 
   /* ---------- 小道具 ---------- */
@@ -133,6 +176,17 @@
     b.textContent = label;
     b.addEventListener('click', onClick);
     return b;
+  }
+
+  /* 狭いときは短い方の文字だけがCSSで見える(@container) */
+  function setTabLabel(node, full, min) {
+    node.textContent = '';
+    var f = el('span', 'lbl-full');
+    f.textContent = full;
+    var m = el('span', 'lbl-min');
+    m.textContent = min;
+    node.appendChild(f);
+    node.appendChild(m);
   }
 
   function fmtTime(ts) {
@@ -249,6 +303,10 @@
         if (savedPanelState && (savedPanelState.tab === 'clips' || savedPanelState.tab === 'memos')) {
           currentTab = savedPanelState.tab;
         }
+        if (savedPanelState && savedPanelState.sort) {
+          if (L.isSortMode(savedPanelState.sort.clips)) sortMode.clips = savedPanelState.sort.clips;
+          if (L.isSortMode(savedPanelState.sort.memos)) sortMode.memos = savedPanelState.sort.memos;
+        }
         if (cb) cb();
       });
     } catch (e) { if (cb) cb(); }
@@ -274,7 +332,7 @@
   /* ---------- パネルの状態保存 ---------- */
   function savePanelStateNow() {
     if (!panelEl) return;
-    var st = { tab: currentTab };
+    var st = { tab: currentTab, sort: { clips: sortMode.clips, memos: sortMode.memos } };
     if (!IS_PAGE_MODE && visible) {
       var r = panelEl.getBoundingClientRect();
       if (r.width > 0) { st.width = Math.round(r.width); st.height = Math.round(r.height); }
@@ -293,10 +351,10 @@
     if (IS_PAGE_MODE || !savedPanelState || !panelEl) return;
     var s = savedPanelState;
     if (typeof s.width === 'number') {
-      panelEl.style.width = Math.max(300, Math.min(s.width, window.innerWidth - 16)) + 'px';
+      panelEl.style.width = Math.max(MIN_W, Math.min(s.width, window.innerWidth - 16)) + 'px';
     }
     if (typeof s.height === 'number') {
-      panelEl.style.height = Math.max(280, Math.min(s.height, window.innerHeight - 16)) + 'px';
+      panelEl.style.height = Math.max(MIN_H, Math.min(s.height, window.innerHeight - 16)) + 'px';
     }
     if (typeof s.left === 'number' && typeof s.top === 'number') {
       var w = parseFloat(panelEl.style.width) || 380;
@@ -380,8 +438,15 @@
       '  <button class="tab" id="tab-memos"></button>',
       '</div>',
       '<div class="toolbar">',
-      '  <button class="btn" id="btn-import">📥 いまのクリップボードを取り込む</button>',
-      '  <button class="btn" id="btn-newmemo">＋ 新しいメモ</button>',
+      '  <button class="btn" id="btn-import">',
+      '    <span class="lbl-full">📥 いまのクリップボードを取り込む</span>',
+      '    <span class="lbl-min">📥 取り込む</span>',
+      '  </button>',
+      '  <button class="btn" id="btn-newmemo">',
+      '    <span class="lbl-full">＋ 新しいメモ</span>',
+      '    <span class="lbl-min">＋ メモ</span>',
+      '  </button>',
+      '  <select class="sortbox" id="sortbox" title="並べ替え（ピン止めは常に一番上に残ります）"></select>',
       '</div>',
       '<div class="list" id="list"></div>',
       '<div class="toast" id="toast"></div>'
@@ -394,6 +459,20 @@
     tabMemosEl = shadow.getElementById('tab-memos');
     btnImportEl = shadow.getElementById('btn-import');
     btnNewMemoEl = shadow.getElementById('btn-newmemo');
+    sortBoxEl = shadow.getElementById('sortbox');
+
+    L.SORT_MODES.forEach(function (m) {
+      var o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = m.name;
+      sortBoxEl.appendChild(o);
+    });
+    sortBoxEl.addEventListener('change', function () {
+      if (!L.isSortMode(sortBoxEl.value)) return;
+      sortMode[currentTab] = sortBoxEl.value;
+      render();
+      scheduleSaveState();
+    });
 
     var closeBtn = shadow.getElementById('btn-close');
     if (IS_WEB_APP) {
@@ -502,16 +581,20 @@
     if (!panelEl) return;
     pendingRender = false;
 
-    tabClipsEl.textContent = 'コピー履歴 ' + data.clips.length + '/' + L.MAX_ITEMS;
-    tabMemosEl.textContent = 'メモ ' + data.memos.length + '/' + L.MAX_ITEMS;
+    setTabLabel(tabClipsEl, 'コピー履歴 ' + data.clips.length + '/' + L.MAX_ITEMS,
+      '履歴 ' + data.clips.length);
+    setTabLabel(tabMemosEl, 'メモ ' + data.memos.length + '/' + L.MAX_ITEMS,
+      'メモ ' + data.memos.length);
     tabClipsEl.classList.toggle('on', currentTab === 'clips');
     tabMemosEl.classList.toggle('on', currentTab === 'memos');
     btnImportEl.style.display = currentTab === 'clips' ? '' : 'none';
     btnNewMemoEl.style.display = currentTab === 'memos' ? '' : 'none';
+    sortBoxEl.value = sortMode[currentTab];
 
     listEl.textContent = '';
     var kind = currentTab === 'clips' ? 'clip' : 'memo';
-    var items = L.sortForDisplay(currentTab === 'clips' ? data.clips : data.memos);
+    var items = L.sortForDisplay(currentTab === 'clips' ? data.clips : data.memos,
+      sortMode[currentTab]);
 
     var showComposer = composerOpen && kind === 'memo';
     var editOnThisTab = editingId !== null && kind === editKind;

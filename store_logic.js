@@ -107,10 +107,43 @@
     return list.filter(function (it) { return it.id !== id; });
   }
 
-  /* 表示順: ピン止めが上、その中でもそれ以外でも新しい順 */
-  function sortForDisplay(list) {
+  /* 並べ替えの種類。🔴どれを選んでもピン止めは必ず最上段(ピン優先はアプリの芯) */
+  var SORT_MODES = [
+    { id: 'new', name: '新しい順' },
+    { id: 'old', name: '古い順' },
+    { id: 'text', name: 'あいうえお順' },
+    { id: 'color', name: '色ごと' }
+  ];
+
+  function isSortMode(id) {
+    for (var i = 0; i < SORT_MODES.length; i++) if (SORT_MODES[i].id === id) return true;
+    return false;
+  }
+
+  var COLOR_RANK = (function () {
+    var r = {};
+    for (var i = 0; i < COLORS.length; i++) r[COLORS[i].id] = i;
+    return r;
+  })();
+
+  /* 表示順: ピン止めが上。その中の並びを mode で選ぶ(既定は新しい順) */
+  function sortForDisplay(list, mode) {
+    var m = isSortMode(mode) ? mode : 'new';
     return list.slice().sort(function (a, b) {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      if (m === 'old') return a.ts - b.ts;
+      if (m === 'text') {
+        var r = String(a.text).localeCompare(String(b.text), 'ja');
+        if (r !== 0) return r;
+        return b.ts - a.ts;
+      }
+      if (m === 'color') {
+        var ra = COLOR_RANK[a.color], rb = COLOR_RANK[b.color];
+        if (ra == null) ra = COLORS.length;
+        if (rb == null) rb = COLORS.length;
+        if (ra !== rb) return ra - rb;
+        return b.ts - a.ts;
+      }
       return b.ts - a.ts;
     });
   }
@@ -129,6 +162,8 @@
     MAX_TEXT: MAX_TEXT,
     COLORS: COLORS,
     TEXT_COLORS: TEXT_COLORS,
+    SORT_MODES: SORT_MODES,
+    isSortMode: isSortMode,
     makeItem: makeItem,
     clampText: clampText,
     prune: prune,
