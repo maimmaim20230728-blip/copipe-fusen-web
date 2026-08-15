@@ -69,6 +69,7 @@ window.__SOYOGI_FUSEN_WEB = true;
         });
         break;
       case 'remove': next = L.removeItem(list, msg.id); break;
+      case 'setOrder': next = L.applyManualOrder(list, msg.ids); break;
       case 'importItems': {
         /* clipsとmemosを1回の書き込みでまとめて足す(拡張のbackground.jsと同じ) */
         var rc = L.mergeItems(store.clips || [], msg.clips || [], now);

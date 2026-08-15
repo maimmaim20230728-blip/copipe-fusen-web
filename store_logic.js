@@ -112,7 +112,11 @@
     { id: 'new', name: '新しい順' },
     { id: 'old', name: '古い順' },
     { id: 'text', name: 'あいうえお順' },
-    { id: 'color', name: '色ごと' }
+    { id: 'color', name: '色ごと' },
+    /* 🔴 これだけはピン止めを最上段に強制しない。
+          利用者が自分で並べた通りに出さないと、掴んで動かしても戻ってしまうため。
+          ピン止めは「自動で消えない」という意味は保ったまま */
+    { id: 'manual', name: '自分の並び' }
   ];
 
   function isSortMode(id) {
@@ -127,8 +131,31 @@
   })();
 
   /* 表示順: ピン止めが上。その中の並びを mode で選ぶ(既定は新しい順) */
+  /* 並べ替えていない項目は先頭(新着がいちばん上に出るように) */
+  function posOf(it) {
+    var n = Number(it && it.pos);
+    return isFinite(n) ? n : -1;
+  }
+
+  /* 掴んで並べ替えた順番を記録する。ここで各項目に pos を振る */
+  function applyManualOrder(list, orderedIds) {
+    var rank = {};
+    (Array.isArray(orderedIds) ? orderedIds : []).forEach(function (id, i) { rank[id] = i; });
+    return list.map(function (it) {
+      if (rank[it.id] == null) return it;
+      return Object.assign({}, it, { pos: rank[it.id] });
+    });
+  }
+
   function sortForDisplay(list, mode) {
     var m = isSortMode(mode) ? mode : 'new';
+    if (m === 'manual') {
+      return list.slice().sort(function (a, b) {
+        var pa = posOf(a), pb = posOf(b);
+        if (pa !== pb) return pa - pb;
+        return b.ts - a.ts;
+      });
+    }
     return list.slice().sort(function (a, b) {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
       if (m === 'old') return a.ts - b.ts;
@@ -168,7 +195,7 @@
     var text = clampText(raw.text == null ? '' : raw.text);
     var ts = Number(raw.ts);
     if (!isFinite(ts)) ts = now;
-    return {
+    var out = {
       id: (typeof raw.id === 'string' && raw.id) ? raw.id.slice(0, 64) : makeId(now),
       text: text,
       color: isColorId(raw.color) ? raw.color : fallbackColor,
@@ -176,6 +203,10 @@
       pinned: !!raw.pinned,
       ts: ts
     };
+    /* 自分で並べ替えた順番も引き継ぐ(バックアップから戻したとき並びが崩れないように) */
+    var pos = Number(raw.pos);
+    if (isFinite(pos)) out.pos = pos;
+    return out;
   }
 
   function buildBackup(clips, memos, exportedAt) {
@@ -246,6 +277,7 @@
     updateItem: updateItem,
     removeItem: removeItem,
     sortForDisplay: sortForDisplay,
+    applyManualOrder: applyManualOrder,
     sanitizeItem: sanitizeItem,
     buildBackup: buildBackup,
     parseBackup: parseBackup,

@@ -111,6 +111,14 @@
     '  background: rgba(255,255,255,.92); color: #1b1b1b; resize: vertical; }',
     '.meta { display: flex; align-items: center; gap: 3px; margin-top: 7px; }',
     '.meta .time { font-size: 11px; color: rgba(0,0,0,.55); flex: 1; }',
+    /* 掴んで並べ替えるための取っ手(「自分の並び」のときだけ出る) */
+    '.grip { flex: none; cursor: grab; touch-action: none; user-select: none;',
+    '  padding: 0 4px 0 0; font-size: 14px; color: rgba(0,0,0,.45); line-height: 1; }',
+    '.grip:active { cursor: grabbing; }',
+    '.card.dragging { opacity: .85; box-shadow: 0 6px 18px rgba(0,0,0,.32);',
+    '  outline: 2px solid #2e9e5b; outline-offset: 1px; }',
+    '.list.reordering { cursor: grabbing; }',
+    '.list.reordering .txt { cursor: grabbing; }',
     '.editrow { display: flex; gap: 6px; margin-top: 7px; justify-content: flex-end; }',
     '.palette { display: none; flex-wrap: wrap; gap: 6px; margin-top: 8px; padding-top: 8px;',
     '  border-top: 1px dashed rgba(0,0,0,.25); align-items: center; }',
@@ -309,6 +317,90 @@
         }
       }, fail);
     } catch (e) { fail(); }
+  }
+
+  /* ---------- 掴んで並べ替え(「自分の並び」のとき) ---------- */
+
+  /* 押した瞬間に掴むと、スクロールやボタン操作と取り合いになる。
+     取っ手(⋮⋮)からだけ開始し、動かしている間は他のカードを押しのけて場所を作る */
+  function beginDrag(e, card, grip, kind) {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (editingId || composerOpen) return;
+    e.preventDefault();
+    var startY = e.clientY;
+    var dragging = false;
+    var ph = null;   // 抜いた場所に置く同じ高さの空白
+
+    var move = function (ev) {
+      if (!dragging) {
+        if (Math.abs(ev.clientY - startY) < 5) return;   // 触れただけでは動かさない
+        dragging = true;
+        var r = card.getBoundingClientRect();
+        ph = el('div', 'card');
+        ph.style.height = r.height + 'px';
+        ph.style.background = 'rgba(0,0,0,.06)';
+        ph.style.border = '1px dashed rgba(0,0,0,.3)';
+        ph.style.boxShadow = 'none';
+        listEl.insertBefore(ph, card);
+        card.classList.add('dragging');
+        card.style.position = 'fixed';
+        card.style.width = r.width + 'px';
+        card.style.left = r.left + 'px';
+        card.style.zIndex = '10';
+        card.style.top = r.top + 'px';
+        listEl.classList.add('reordering');
+      }
+      card.style.top = (ev.clientY - 14) + 'px';
+
+      /* 画面の端に近づいたら自動でスクロール */
+      var lr = listEl.getBoundingClientRect();
+      if (ev.clientY < lr.top + 28) listEl.scrollTop -= 12;
+      else if (ev.clientY > lr.bottom - 28) listEl.scrollTop += 12;
+
+      /* いまの指の位置に一番近い隙間へ空白を移す */
+      var cards = [];
+      for (var i = 0; i < listEl.children.length; i++) {
+        var c = listEl.children[i];
+        if (c !== card && c !== ph && c.dataset && c.dataset.id) cards.push(c);
+      }
+      var placed = false;
+      for (var j = 0; j < cards.length; j++) {
+        var cr = cards[j].getBoundingClientRect();
+        if (ev.clientY < cr.top + cr.height / 2) {
+          listEl.insertBefore(ph, cards[j]);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) listEl.appendChild(ph);
+    };
+
+    var up = function () {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      if (!dragging) return;
+      listEl.insertBefore(card, ph);
+      ph.remove();
+      card.classList.remove('dragging');
+      card.style.position = '';
+      card.style.width = '';
+      card.style.left = '';
+      card.style.top = '';
+      card.style.zIndex = '';
+      listEl.classList.remove('reordering');
+      /* いま見えている順番をそのまま保存する */
+      var ids = [];
+      for (var i = 0; i < listEl.children.length; i++) {
+        var c = listEl.children[i];
+        if (c.dataset && c.dataset.id) ids.push(c.dataset.id);
+      }
+      sendOp({ op: 'setOrder', kind: kind, ids: ids });
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   }
 
   /* ---------- 小窓で開く ---------- */
@@ -774,6 +866,7 @@
 
   function buildCard(item, kind) {
     var card = el('div', 'card');
+    card.dataset.id = item.id;
     card.style.background = L.colorHex(item.color);
 
     var txt = el('div', 'txt clamp');
@@ -785,6 +878,13 @@
     card.appendChild(txt);
 
     var meta = el('div', 'meta');
+    if (sortMode[currentTab] === 'manual') {
+      var grip = el('span', 'grip');
+      grip.textContent = '⋮⋮';
+      grip.title = 'ここを掴んで上下に動かすと順番を変えられます';
+      grip.addEventListener('pointerdown', function (e) { beginDrag(e, card, grip, kind); });
+      meta.appendChild(grip);
+    }
     var time = el('span', 'time');
     time.textContent = fmtTime(item.ts);
     meta.appendChild(time);
