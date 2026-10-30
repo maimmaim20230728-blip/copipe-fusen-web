@@ -137,9 +137,11 @@
     return isFinite(n) ? n : -1;
   }
 
-  /* 掴んで並べ替えた順番を記録する。ここで各項目に pos を振る */
+  /* 掴んで並べ替えた順番を記録する。ここで各項目に pos を振る
+     🔴 rank は Object.create(null)。{} だと id が "constructor" などのとき
+        Object.prototype の中身を拾って順番が壊れる */
   function applyManualOrder(list, orderedIds) {
-    var rank = {};
+    var rank = Object.create(null);
     (Array.isArray(orderedIds) ? orderedIds : []).forEach(function (id, i) { rank[id] = i; });
     return list.map(function (it) {
       if (rank[it.id] == null) return it;
@@ -235,20 +237,36 @@
     return { clips: pick(obj.clips, 'white'), memos: pick(obj.memos, 'yellow') };
   }
 
-  /* 今の中身に足す(消さない)。同じidは重複させない */
+  /* 今の中身に足す。同じidは重複させない。
+     🔴 足して50件を超えた分は、ピン止めしていない古いものから整理される(元からあった項目も対象)。
+        消えた件数は dropped で返し、画面に出す。
+     読み込んだ項目の pos(自分の並び)は、今ある最大値の後ろへ付け直す(重複させない)。
+     🔴 have は Object.create(null)。{} だと id が "constructor" などのとき重複と誤判定する */
   function mergeItems(current, incoming, now) {
     var cur = Array.isArray(current) ? current.slice() : [];
-    var have = {};
-    cur.forEach(function (it) { have[it.id] = true; });
+    var have = Object.create(null);
+    var maxPos = -1;
+    cur.forEach(function (it) {
+      have[it.id] = true;
+      var p = Number(it && it.pos);
+      if (isFinite(p) && p > maxPos) maxPos = p;
+    });
     var added = 0, skipped = 0;
+    var withPos = [];
     (Array.isArray(incoming) ? incoming : []).forEach(function (raw) {
       var it = sanitizeItem(raw, 'white', now);
       if (!it) { skipped++; return; }
       if (have[it.id]) { skipped++; return; }
       have[it.id] = true;
+      if (it.pos != null) withPos.push(it);
       cur.push(it);
       added++;
     });
+    /* 読み込んだ側どうしの順番は保ったまま、今の並びの後ろへ */
+    withPos.sort(function (a, b) { return a.pos - b.pos; })
+      .forEach(function (it, i) { it.pos = maxPos + 1 + i; });
+    /* 増えるものが無ければ何も消さない(全部ピン止めで一時的に50件を超えている分も守る) */
+    if (!added) return { list: cur, added: 0, skipped: skipped, dropped: 0 };
     var pruned = prune(cur);
     return { list: pruned, added: added, skipped: skipped, dropped: cur.length - pruned.length };
   }

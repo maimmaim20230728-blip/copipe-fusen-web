@@ -2,7 +2,7 @@
 /* 便利クリップメモ・そよぎ Web版 service worker (cache-first)
    🔴 更新のたびに CACHE の版数を必ず上げること(据え置き禁止)。
    🔴 更新直後の初回起動は旧画面のまま=開き直しで反映、を案内文に入れること。 */
-var CACHE = 'benri-clip-memo-web-v0.1.7';
+var CACHE = 'benri-clip-memo-web-v0.1.8';
 var ASSETS = [
   './',
   './index.html',
@@ -15,10 +15,14 @@ var ASSETS = [
   './icons/icon512.png'
 ];
 
+/* 🔴 ふつうに取りに行くとブラウザのHTTPキャッシュから古いファイルが返り、
+      版を上げても新しいキャッシュに旧版が入ることがある。cache:'reload' で必ず取り直す */
 self.addEventListener('install', function (e) {
   e.waitUntil(
     caches.open(CACHE)
-      .then(function (c) { return c.addAll(ASSETS); })
+      .then(function (c) {
+        return c.addAll(ASSETS.map(function (u) { return new Request(u, { cache: 'reload' }); }));
+      })
       .then(function () { return self.skipWaiting(); })
   );
 });

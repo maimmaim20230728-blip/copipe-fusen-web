@@ -6,7 +6,9 @@ Chrome拡張「便利クリップメモ・そよぎ」のWeb版。GitHub Pages�
 データは端末内(localStorage)のみ・外部送信なし。
 
 ## 構成
-- `index.html` … PWA本体＋localStorageアダプタ(拡張のbackground.js相当)
+- `index.html` … PWA本体＋localStorageアダプタ(拡張のbackground.js相当)。
+  🔴中身はメモリに持たず、読むときも書く直前も localStorage から読み直す(2つ開いても古い中身で上書きしない)。
+  別のタブが書いたら `storage` イベントで描き直す。保存に失敗したら(容量超過など)画面に知らせる
 - `store_logic.js` / `content.js` … 🔴拡張本体(copipe_fusen)と共用。直接編集禁止・`node _sync_web.js`で同期
 - `sw.js` … cache-first。🔴更新のたびCACHE版数を上げる＋「開き直しで反映」を案内
 - `manifest.webmanifest` / `icons/` … アイコンは透過なし正方形(`node _make_icons.js`)

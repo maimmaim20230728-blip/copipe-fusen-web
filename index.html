@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="app-version" content="0.1.2">
+<meta name="app-version" content="0.1.8">
 <meta name="theme-color" content="#2EAD62">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="クリップメモ">
@@ -24,33 +24,63 @@ window.__SOYOGI_FUSEN_WEB = true;
   var KEY = 'benri-clip-memo-web';
   var msgListeners = [];
   var changeListeners = [];
-  var store = {};
-  try {
-    var saved = localStorage.getItem(KEY);
-    if (saved) store = JSON.parse(saved) || {};
-  } catch (e) {}
+  /* 保存できなかったとき(容量いっぱい・保存が使えない状態)に画面へ出す文言 */
+  var SAVE_FAIL_MSG = '保存できませんでした。保存できる量がいっぱいの可能性があります。いらない項目を消してから、もう一度お試しください';
 
-  function persist() {
-    try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {}
+  /* 🔴 Web版を2つ開いても、片方が古い中身で丸ごと上書きしないよう、
+        中身をメモリに持たず、読むときも書く直前も毎回 localStorage から読み直す */
+  function readStore() {
+    try {
+      var saved = localStorage.getItem(KEY);
+      var obj = saved ? JSON.parse(saved) : {};
+      return (obj && typeof obj === 'object') ? obj : {};
+    } catch (e) { return {}; }
   }
 
+  function notify(changes) {
+    setTimeout(function () {
+      changeListeners.forEach(function (f) { f(changes, 'local'); });
+    }, 0);
+  }
+
+  /* 書く直前に読み直して、変えるキーだけ差し替えて書く。書けなかったら false(画面は変えない) */
   function applySet(obj) {
+    var store = readStore();
     var changes = {};
     Object.keys(obj).forEach(function (k) {
       changes[k] = { oldValue: store[k], newValue: obj[k] };
       store[k] = obj[k];
     });
-    persist();
-    setTimeout(function () {
-      changeListeners.forEach(function (f) { f(changes, 'local'); });
-    }, 0);
+    try {
+      localStorage.setItem(KEY, JSON.stringify(store));
+    } catch (e) {
+      return false;
+    }
+    notify(changes);
+    return true;
   }
+
+  /* もう1つのWeb版(別のタブ・窓)が書いたら、こちらの画面も描き直す */
+  window.addEventListener('storage', function (e) {
+    if (e.key !== null && e.key !== KEY) return;
+    var before = {};
+    try { before = e.oldValue ? (JSON.parse(e.oldValue) || {}) : {}; } catch (err) {}
+    var after = readStore();
+    var changes = {};
+    ['clips', 'memos'].forEach(function (k) {
+      if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) {
+        changes[k] = { oldValue: before[k], newValue: after[k] || [] };
+      }
+    });
+    if (Object.keys(changes).length) notify(changes);
+  });
 
   /* 拡張background.jsのhandleOpと同じ内容。
      🔴 addClip/addMemoの保存先はop名で固定(msg.kind判定にしない) */
   function handleOp(msg) {
     var L = window.SoyogiFusenLogic;
     var now = Date.now();
+    var store = readStore();
     var kind = msg.kind === 'memo' ? 'memo' : 'clip';
     var key = kind === 'memo' ? 'memos' : 'clips';
     if (msg.op === 'addClip') key = 'clips';
@@ -74,7 +104,7 @@ window.__SOYOGI_FUSEN_WEB = true;
         /* clipsとmemosを1回の書き込みでまとめて足す(拡張のbackground.jsと同じ) */
         var rc = L.mergeItems(store.clips || [], msg.clips || [], now);
         var rm = L.mergeItems(store.memos || [], msg.memos || [], now);
-        applySet({ clips: rc.list, memos: rm.list });
+        if (!applySet({ clips: rc.list, memos: rm.list })) return { ok: false, message: SAVE_FAIL_MSG };
         return {
           ok: true, addedClips: rc.added, addedMemos: rm.added,
           skipped: rc.skipped + rm.skipped, dropped: rc.dropped + rm.dropped
@@ -83,7 +113,8 @@ window.__SOYOGI_FUSEN_WEB = true;
     }
     var patch = {};
     patch[key] = next;
-    applySet(patch);
+    /* 🔴 書けなかったことを握りつぶさない(content.js が下書きを残して文言を出す) */
+    if (!applySet(patch)) return { ok: false, message: SAVE_FAIL_MSG };
     return { ok: true };
   }
 
@@ -111,14 +142,15 @@ window.__SOYOGI_FUSEN_WEB = true;
     storage: {
       local: {
         get: function (defaults, cb) {
+          var store = readStore();
           var res = Object.assign({}, defaults);
           Object.keys(store).forEach(function (k) { res[k] = store[k]; });
           setTimeout(function () { cb(res); }, 0);
         },
         set: function (obj, cb) {
-          applySet(obj);
+          var ok = applySet(obj);
           if (cb) setTimeout(cb, 0);
-          return Promise.resolve();
+          return ok ? Promise.resolve() : Promise.reject(new Error(SAVE_FAIL_MSG));
         }
       },
       onChanged: { addListener: function (f) { changeListeners.push(f); } }
