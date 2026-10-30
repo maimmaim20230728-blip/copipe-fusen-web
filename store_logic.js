@@ -107,6 +107,39 @@
     return list.filter(function (it) { return it.id !== id; });
   }
 
+  /* 消した項目を「元に戻す」。id・文字・色・ピン・ts・pos はそのまま戻す。
+     🔴 戻した結果が50件を超えたら、戻した項目は protectId で守る
+        (ほかのピン止めしていない古いものが整理されるのは今のルールどおり)。
+     同じidがもうあれば何もしない(二度押し・別のタブで先に戻した場合) */
+  function restoreItem(list, raw, fallbackColor, now) {
+    var cur = Array.isArray(list) ? list : [];
+    var it = sanitizeItem(raw, fallbackColor || 'white', now);
+    if (!it) return cur;
+    for (var i = 0; i < cur.length; i++) {
+      if (cur[i].id === it.id) return cur;
+    }
+    return prune([it].concat(cur), it.id);
+  }
+
+  /* ---- 検索 ---- */
+
+  /* 検索用に文字をそろえる。全角の英数字は半角に(NFKC)、大文字は小文字に */
+  function normalizeForSearch(s) {
+    var t = String(s == null ? '' : s);
+    try { t = t.normalize('NFKC'); } catch (e) {}
+    return t.toLowerCase();
+  }
+
+  /* 打った文字を含む項目だけにしぼる(空白だけなら全部) */
+  function filterItems(list, query) {
+    var q = normalizeForSearch(query).trim();
+    var src = Array.isArray(list) ? list : [];
+    if (!q) return src.slice();
+    return src.filter(function (it) {
+      return normalizeForSearch(it && it.text).indexOf(q) >= 0;
+    });
+  }
+
   /* 並べ替えの種類。🔴どれを選んでもピン止めは必ず最上段(ピン優先はアプリの芯) */
   var SORT_MODES = [
     { id: 'new', name: '新しい順' },
@@ -294,6 +327,9 @@
     addMemo: addMemo,
     updateItem: updateItem,
     removeItem: removeItem,
+    restoreItem: restoreItem,
+    normalizeForSearch: normalizeForSearch,
+    filterItems: filterItems,
     sortForDisplay: sortForDisplay,
     applyManualOrder: applyManualOrder,
     sanitizeItem: sanitizeItem,

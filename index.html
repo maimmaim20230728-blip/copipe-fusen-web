@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="app-version" content="0.1.8">
+<meta name="app-version" content="0.1.9">
 <meta name="theme-color" content="#2EAD62">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="クリップメモ">
@@ -99,6 +99,8 @@ window.__SOYOGI_FUSEN_WEB = true;
         });
         break;
       case 'remove': next = L.removeItem(list, msg.id); break;
+      /* 「元に戻す」。消した項目を同じ id・文字・色・ピン・ts・pos で戻す(拡張と同じ) */
+      case 'restore': next = L.restoreItem(list, msg.item, kind === 'memo' ? 'yellow' : 'white', now); break;
       case 'setOrder': next = L.applyManualOrder(list, msg.ids); break;
       case 'importItems': {
         /* clipsとmemosを1回の書き込みでまとめて足す(拡張のbackground.jsと同じ) */

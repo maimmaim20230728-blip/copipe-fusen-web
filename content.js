@@ -24,6 +24,8 @@
   var host = null, shadow = null, panelEl = null, listEl = null, toastEl = null;
   var tabClipsEl = null, tabMemosEl = null, btnImportEl = null, btnNewMemoEl = null;
   var sortBoxEl = null, fileInputEl = null;
+  var btnSearchEl = null, searchBarEl = null, searchInputEl = null, searchCountEl = null;
+  var btnPauseEl = null, pauseBarEl = null;
   var visible = false;
   var currentTab = 'clips';           // 'clips' | 'memos'
   var sortMode = { clips: 'new', memos: 'new' };   // タブごとに覚える
@@ -45,7 +47,18 @@
   var reorderDragging = false;        // 掴んで動かしている間は再描画しない
   var pendingRender = false;
   var focusBeforeOpen = null;         // パネルを開く前にフォーカスがあった場所(閉じたら戻す)
+  var recordingPaused = false;        // 記録の一時停止(全部のフレームで共有・storage.local)
+  /* 検索は状態駆動。文字は searchQuery に持ち、入力欄そのものは render() で作り直さない
+     (作り直すと日本語の変換中の文字が消えるため。render() は表示と件数だけを合わせる) */
+  var searchOpen = false;
+  var searchQuery = '';
+  var searchComposing = false;        // 変換中は絞り込まず、確定してから絞り込む
+  var filtering = false;              // いま絞り込んで表示しているか(render()が決める)
+  var undoPending = null;             // 直前に消した項目 {kind, item}(トーストが出ている間だけ戻せる)
+  var focusAfterRender = null;        // 次の描画のあとフォーカスを置くカード {key, act}
   var toastTimer = null;
+  var toastMs = 0;
+  var toastOnHide = null;
   var saveStateTimer = null;
   var resizeClampTimer = null;
 
@@ -56,6 +69,7 @@
   var CONFIRM_RESET_MS = 5000;        // 「削除する」を自動で🗑️に戻すまで
   var MAX_IMPORT_BYTES = 20 * 1024 * 1024;
   var COMPOSER_KEY = '__composer__';  // 新しいメモの入力カードのフォーカス目印
+  var UNDO_MS = 6000;                 // 「元に戻す」を出しておく長さ(マウスやフォーカスが乗っている間は消さない)
 
   /* ---------- スタイル ---------- */
   /* 🔴 パネルの最小サイズ。CSSと位置復元の両方で使う(片方だけ直すと、
@@ -99,7 +113,7 @@
     '  display: inline-flex; align-items: center; justify-content: center; color: #333; flex: none; }',
     '.iconbtn:hover { background: rgba(255,255,255,.95); }',
     /* 🔴 白文字の緑・赤は WCAG AA(4.5:1)を満たす濃さ。#2e9e5b(3.4:1)・#d9534f(4.0:1)に戻さない */
-    '.iconbtn.on { background: #23804a; }',
+    '.iconbtn.on { background: #23804a; color: #ffffff; }',
     '.iconbtn.danger { background: #c9302c; color: #fff; font-size: 12px; font-weight: 700;',
     '  width: auto; padding: 0 10px; }',
     '.tabs { display: flex; background: #f7faf8; border-bottom: 1px solid #ddd; flex: none; }',
@@ -166,9 +180,31 @@
     '  white-space: normal; word-break: break-word;',
     '  text-align: center; line-height: 1.5; }',
     '.toast.show { opacity: .95; }',
+    /* 「元に戻す」付きのトーストだけ押せるようにする */
+    '.toast.show.has-act { pointer-events: auto; opacity: 1; }',
+    '.toast-act { margin-left: 10px; border: 1px solid #ffffff; background: transparent;',
+    '  color: #ffffff; border-radius: 12px; padding: 1px 10px; font-size: 12px; font-weight: 700;',
+    '  cursor: pointer; white-space: nowrap; line-height: 1.6; }',
+    '.toast-act:hover { background: rgba(255,255,255,.18); }',
+    /* 記録の一時停止中の帯。色だけに頼らず文字と記号で伝える */
+    '.pausebar { display: none; align-items: center; gap: 6px 8px; flex-wrap: wrap; flex: none;',
+    '  padding: 6px 10px; background: #fff4d6; color: #5c3b00; border-bottom: 1px solid #e3bf62;',
+    '  font-size: 12px; font-weight: 700; line-height: 1.4; }',
+    '.pausebar.on { display: flex; }',
+    '.pausebar-txt { flex: 1 1 auto; min-width: 0; }',
+    '.pausebar-btn { flex: none; border: 1px solid #8a5a00; background: #ffffff; color: #5c3b00;',
+    '  border-radius: 8px; padding: 3px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }',
+    /* 検索の欄 */
+    '.searchbar { display: none; align-items: center; gap: 4px 6px; flex-wrap: wrap; flex: none;',
+    '  padding: 6px 10px; background: #ffffff; border-bottom: 1px solid #e3ebe6; }',
+    '.searchbar.open { display: flex; }',
+    /* 枠線は白との差 3:1 以上(入力欄の場所が見えるように) */
+    '.searchbar input { flex: 1 1 90px; min-width: 0; border: 1px solid #7d8f83; border-radius: 8px;',
+    '  padding: 6px 8px; font-size: 13px; color: #1b1b1b; background: #ffffff; }',
+    '.searchbar .count { font-size: 12px; color: #3d4a42; }',
     /* キーボードで動かしたときの目印。付箋のどの色の上でも見えるよう白と濃い青の二重の輪にする
        (外側に出すと端のタブがパネルの縁で切れるので、タブだけ内側に描く) */
-    'button:focus-visible, select:focus-visible, textarea:focus-visible {',
+    'button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible {',
     '  outline: none; box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #174ea6; }',
     '.tab:focus-visible { box-shadow: inset 0 0 0 3px #174ea6; }',
 
@@ -189,6 +225,11 @@
     '}',
     '@container (max-width: 240px) {',
     '  .hdr .ttl { display: none; }',
+    /* ヘッダーのボタンが6つになったので、ロゴを隠して詰める。🔴 それでも入らない幅では
+       折り返す(右端の「しまう」が切れて押せなくなるのを防ぐ)。24pxは押しやすさの下限 */
+    '  .logo { display: none; }',
+    '  .hdr-actions { gap: 3px; flex-wrap: wrap; justify-content: flex-end; }',
+    '  .hdr .iconbtn { width: 24px; }',
     '  .meta { flex-wrap: wrap; }',
     '  .meta .time { flex: 1 0 100%; margin-bottom: 3px; }',
     '}',
@@ -207,8 +248,12 @@
     '  .meta { gap: 2px; justify-content: flex-end; margin-top: 5px; }',
     '  .iconbtn { width: 22px; height: 21px; font-size: 11px; }',
     '  .toast { padding: 5px 8px; font-size: 11px; bottom: 8px; }',
-    /* この幅でバックアップや窓の切り替えはしないので隠す(広げれば出る) */
-    '  .bak, .win { display: none; }',
+    '  .toast-act { margin: 4px 0 0; }',
+    /* この幅でバックアップや窓の切り替えはしないので隠す(広げれば出る)。
+       ロゴも隠して、検索・一時停止・しまうの3つを1列に収める */
+    '  .bak, .win, .logo { display: none; }',
+    '  .pausebar, .searchbar { padding: 5px 5px; font-size: 11px; }',
+    '  .searchbar .count { font-size: 11px; }',
     '}'
   ].join('\n');
 
@@ -256,15 +301,53 @@
     return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
   }
 
-  /* 長い知らせ(保存できなかった・整理した件数など)は読み切れるよう長めに出す */
-  function toast(msg) {
+  /* 長い知らせ(保存できなかった・整理した件数など)は読み切れるよう長めに出す。
+     action={label, title, ms, onClick, onHide} を渡すと押せるボタン付きになる(「元に戻す」)。
+     マウスやフォーカスが乗っている間は消さない(読み上げやキーボードで押す時間を取る) */
+  function toast(msg, action) {
     if (!toastEl) return;
+    var prevOnHide = toastOnHide;
+    toastOnHide = null;
+    if (prevOnHide) prevOnHide();   // 前の「元に戻す」は、別の知らせに替わった時点で終わり
     var text = String(msg);
-    toastEl.textContent = text;
+    toastEl.textContent = '';
+    var span = el('span', 'toast-msg');
+    span.textContent = text;
+    toastEl.appendChild(span);
+    if (action) {
+      var b = el('button', 'toast-act');
+      b.textContent = action.label;
+      b.title = action.title || action.label;
+      b.dataset.act = 'toast-act';
+      b.addEventListener('click', action.onClick);
+      toastEl.appendChild(b);
+      toastOnHide = action.onHide || null;
+    }
+    toastEl.classList.toggle('has-act', !!action);
     toastEl.classList.add('show');
+    toastMs = action ? (action.ms || UNDO_MS) : Math.min(6000, Math.max(1700, text.length * 110));
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { toastEl.classList.remove('show'); },
-      Math.min(6000, Math.max(1700, text.length * 110)));
+    toastTimer = setTimeout(hideToast, toastMs);
+  }
+
+  /* 消すときはボタンも抜く(見えないのにTabで止まらないように) */
+  function hideToast() {
+    if (!toastEl) return;
+    clearTimeout(toastTimer);
+    toastEl.classList.remove('show');
+    toastEl.classList.remove('has-act');
+    var b = findAct(toastEl, 'toast-act');
+    if (b) b.remove();
+    var f = toastOnHide;
+    toastOnHide = null;
+    if (f) f();
+  }
+
+  function holdToast() { clearTimeout(toastTimer); }
+  function releaseToast() {
+    if (!toastEl || !toastEl.classList.contains('show')) return;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(hideToast, Math.max(2000, toastMs));
   }
 
   /* 拡張が更新・再読み込みされると、古いタブに残ったこのスクリプトは拡張と話せなくなる
@@ -367,14 +450,26 @@
     } catch (err2) { return ''; }
   }
 
+  /* auto:true = ページでのコピーの自動記録(一時停止中は background でも捨てる) */
   function onCopyOrCut(e) {
+    if (recordingPaused) return;   // 記録の一時停止中
     var t = grabCopiedText(e);
     if (!t || !t.trim()) return;
-    sendOp({ op: 'addClip', text: t });
+    sendOp({ op: 'addClip', text: t, auto: true });
   }
 
   document.addEventListener('copy', onCopyOrCut, true);
   document.addEventListener('cut', onCopyOrCut, true);
+
+  /* 一時停止の状態は、iframe も含めた全部のフレームが自分で読む(コピーはどのフレームでも起きる) */
+  if (!IS_WEB_APP) {
+    try {
+      chrome.storage.local.get({ recordingPaused: false }, function (res) {
+        recordingPaused = !!(res && res.recordingPaused);
+        if (visible) render();
+      });
+    } catch (e) {}
+  }
 
   /* ---------- クリップボード操作 ---------- */
   /* 🔴 できたときだけ「コピーしました」。両方のやり方でだめなら、そう伝える */
@@ -432,7 +527,8 @@
      取っ手(⋮⋮)からだけ開始し、動かしている間は他のカードを押しのけて場所を作る */
   function beginDrag(e, card, grip, kind) {
     if (e.button !== undefined && e.button !== 0) return;
-    if (editingId || composerOpen) return;
+    /* しぼりこみ中は位置があいまいになるので並べ替えない(取っ手も出していない) */
+    if (editingId || composerOpen || filtering) return;
     e.preventDefault();
     var startY = e.clientY;
     var dragging = false;
@@ -528,6 +624,7 @@
 
   /* 取っ手にフォーカスがあるとき Alt+上 / Alt+下 で1つずつ動かす(マウスが使えない人向け) */
   function moveByKey(item, kind, dir) {
+    if (filtering) return;
     var key = kind === 'memo' ? 'memos' : 'clips';
     var ids = L.sortForDisplay(data[key], 'manual').map(function (it) { return it.id; });
     var i = ids.indexOf(item.id);
@@ -558,6 +655,95 @@
     } catch (e) {
       toast('小窓を開けませんでした');
     }
+  }
+
+  /* ---------- 記録の一時停止 ---------- */
+
+  /* storage.local に置くので、全部のタブ・iframe とブラウザの開き直しに効く。
+     止めている間も「取り込む」ボタンとメモは使える(止めるのはページでのコピーの自動記録だけ) */
+  function togglePaused() {
+    var next = !recordingPaused;
+    var fromBar = false;
+    try { fromBar = !!(shadow.activeElement && shadow.activeElement.id === 'btn-resume'); } catch (e) {}
+    saveOp({ op: 'setRecordingPaused', paused: next }).then(function () {
+      recordingPaused = next;
+      render();
+      /* 帯の「再開する」で再開したら帯が消えるので、ヘッダーのボタンへフォーカスを移す */
+      if (fromBar) { try { btnPauseEl.focus(); } catch (e2) {} }
+      toast(next ? '記録を止めました。「取り込む」とメモは使えます' : '記録を再開しました');
+    }, toast);
+  }
+
+  /* ---------- 検索 ---------- */
+
+  function openSearch() {
+    searchOpen = true;
+    searchInputEl.value = searchQuery;
+    render();
+    try { searchInputEl.focus(); } catch (e) {}
+  }
+
+  /* 閉じたら全部に戻す。フォーカスは🔍へ */
+  function closeSearch() {
+    var hadFocus = false;
+    try { hadFocus = !!shadow.activeElement; } catch (e) {}
+    searchOpen = false;
+    searchQuery = '';
+    searchComposing = false;
+    searchInputEl.value = '';
+    render();
+    if (hadFocus) { try { btnSearchEl.focus(); } catch (e2) {} }
+  }
+
+  function setSearchQuery(q) {
+    if (q === searchQuery) return;
+    searchQuery = q;
+    render();
+  }
+
+  function isTextEntry(t) {
+    if (!t || !t.tagName) return false;
+    var tag = String(t.tagName).toUpperCase();
+    return tag === 'INPUT' || tag === 'TEXTAREA' || !!t.isContentEditable;
+  }
+
+  /* ---------- 消す・元に戻す ---------- */
+
+  /* 消せたら「削除しました」と「元に戻す」を6秒ほど出す。戻すときに使う中身はここで写しておく */
+  function deleteItem(kind, item) {
+    var list = kind === 'memo' ? data.memos : data.clips;
+    var latest = null;
+    for (var i = 0; i < list.length; i++) if (list[i].id === item.id) latest = list[i];
+    var snapshot = Object.assign({}, latest || item);
+    saveOp({ op: 'remove', kind: kind, id: item.id }).then(function () {
+      var u = { kind: kind, item: snapshot };
+      toast('削除しました', {
+        label: '元に戻す',
+        title: '元に戻す（Ctrl+Z でも戻せます）',
+        ms: UNDO_MS,
+        onClick: doUndo,
+        onHide: function () { if (undoPending === u) undoPending = null; }
+      });
+      undoPending = u;
+    }, toast);
+  }
+
+  /* 同じ id・文字・色・ピン・ts・pos で戻す(background の直列キューの restore)。
+     戻したカードの🗑️へフォーカスを置く(キーボードで押した人が迷わないように) */
+  function doUndo() {
+    var u = undoPending;
+    if (!u) return;
+    undoPending = null;
+    hideToast();
+    saveOp({ op: 'restore', kind: u.kind, item: u.item }).then(function () {
+      var key = u.kind === 'memo' ? 'memos' : 'clips';
+      data[key] = L.restoreItem(data[key], u.item, u.kind === 'memo' ? 'yellow' : 'white', Date.now());
+      if (visible) {
+        focusAfterRender = { key: u.item.id, act: 'del' };
+        render();
+      }
+      toast('元に戻しました');
+    }, toast);
   }
 
   /* ---------- バックアップ(書き出し・読み込み) ---------- */
@@ -631,9 +817,10 @@
   /* ---------- データ読み込み・監視 ---------- */
   function loadData(cb) {
     try {
-      chrome.storage.local.get({ clips: [], memos: [], panelState: null }, function (res) {
+      chrome.storage.local.get({ clips: [], memos: [], panelState: null, recordingPaused: false }, function (res) {
         data.clips = res.clips || [];
         data.memos = res.memos || [];
+        if (!IS_WEB_APP) recordingPaused = !!res.recordingPaused;
         savedPanelState = res.panelState || null;
         if (savedPanelState && (savedPanelState.tab === 'clips' || savedPanelState.tab === 'memos')) {
           currentTab = savedPanelState.tab;
@@ -647,17 +834,22 @@
     } catch (e) { if (cb) cb(); }
   }
 
-  if (IS_TOP) {
-    try {
-      chrome.storage.onChanged.addListener(function (changes, area) {
-        if (area !== 'local') return;
-        var dirty = false;
+  /* 一時停止は全部のフレームで追う。一覧の中身はパネルのあるトップフレームだけ */
+  try {
+    chrome.storage.onChanged.addListener(function (changes, area) {
+      if (area !== 'local') return;
+      var dirty = false;
+      if (changes.recordingPaused && !IS_WEB_APP) {
+        recordingPaused = !!changes.recordingPaused.newValue;
+        dirty = true;
+      }
+      if (IS_TOP) {
         if (changes.clips) { data.clips = changes.clips.newValue || []; dirty = true; }
         if (changes.memos) { data.memos = changes.memos.newValue || []; dirty = true; }
-        if (dirty && visible) scheduleRender();
-      });
-    } catch (e) {}
-  }
+      }
+      if (dirty && visible) scheduleRender();
+    });
+  } catch (e) {}
 
   function scheduleRender() {
     if (editingId || composerOpen || reorderDragging) { pendingRender = true; return; }
@@ -777,11 +969,17 @@
       '  <span class="logo" aria-hidden="true">📋</span>',
       '  <span class="ttl">便利クリップメモ・そよぎ</span>',
       '  <span class="hdr-actions">',
+      '    <button class="iconbtn" id="btn-search" title="さがす（いま見ている一覧を文字でしぼりこむ）" aria-label="さがす（いま見ている一覧を文字でしぼりこむ）" aria-expanded="false" aria-controls="searchbar">🔍</button>',
+      '    <button class="iconbtn" id="btn-pause" title="コピーの自動記録を一時停止" aria-label="コピーの自動記録を一時停止" aria-pressed="false">⏸</button>',
       '    <button class="iconbtn win" id="btn-window" title="小窓で開く（ブラウザとは別の小さな窓にする）" aria-label="小窓で開く（ブラウザとは別の小さな窓にする）">🪟</button>',
       '    <button class="iconbtn bak" id="btn-export" title="書き出し（今の中身をファイルに保存）" aria-label="書き出し（今の中身をファイルに保存）">💾</button>',
       '    <button class="iconbtn bak" id="btn-import-file" title="読み込み（保存したファイルの中身を、今のものに足す）" aria-label="読み込み（保存したファイルの中身を、今のものに足す）">📂</button>',
       '    <button class="iconbtn" id="btn-close" title="しまう(拡張機能アイコンで再表示)" aria-label="しまう(拡張機能アイコンで再表示)">✕</button>',
       '  </span>',
+      '</div>',
+      '<div class="pausebar" id="pausebar">',
+      '  <span class="pausebar-txt">⏸ 記録を止めています（ページでコピーしても残りません）</span>',
+      '  <button class="pausebar-btn" id="btn-resume">再開する</button>',
       '</div>',
       '<input type="file" id="file-input" accept="application/json,.json" style="display:none">',
       '<div class="tabs" role="tablist" aria-label="表示する一覧">',
@@ -799,6 +997,11 @@
       '  </button>',
       '  <select class="sortbox" id="sortbox" aria-label="並べ替え" title="並べ替え（「自分の並び」以外では、ピン止めが一番上に来ます）"></select>',
       '</div>',
+      '<div class="searchbar" id="searchbar" role="search">',
+      '  <input type="text" id="search-input" placeholder="さがす文字" autocomplete="off" enterkeyhint="search" aria-label="さがす文字（いま見ている一覧をしぼりこむ）">',
+      '  <span class="count" id="search-count" aria-live="polite"></span>',
+      '  <button class="iconbtn" id="btn-search-close" title="さがすのをやめる（Esc）" aria-label="さがすのをやめる（Esc）">✕</button>',
+      '</div>',
       '<div class="list" id="list" role="tabpanel"></div>',
       '<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>'
     ].join('\n');
@@ -811,6 +1014,12 @@
     btnImportEl = shadow.getElementById('btn-import');
     btnNewMemoEl = shadow.getElementById('btn-newmemo');
     sortBoxEl = shadow.getElementById('sortbox');
+    btnSearchEl = shadow.getElementById('btn-search');
+    searchBarEl = shadow.getElementById('searchbar');
+    searchInputEl = shadow.getElementById('search-input');
+    searchCountEl = shadow.getElementById('search-count');
+    btnPauseEl = shadow.getElementById('btn-pause');
+    pauseBarEl = shadow.getElementById('pausebar');
 
     L.SORT_MODES.forEach(function (m) {
       var o = document.createElement('option');
@@ -852,6 +1061,36 @@
       winBtn.addEventListener('click', openSmallWindow);
     }
 
+    /* 記録の一時停止(Web版はコピーの自動記録が無いので出さない) */
+    if (IS_WEB_APP) {
+      btnPauseEl.style.display = 'none';
+    } else {
+      btnPauseEl.addEventListener('click', togglePaused);
+      shadow.getElementById('btn-resume').addEventListener('click', togglePaused);
+    }
+
+    /* 検索。🔴 入力欄は作り直さない。変換中は絞り込まず、確定してから絞り込む */
+    btnSearchEl.addEventListener('click', function () {
+      if (searchOpen) closeSearch(); else openSearch();
+    });
+    shadow.getElementById('btn-search-close').addEventListener('click', closeSearch);
+    searchInputEl.addEventListener('compositionstart', function () { searchComposing = true; });
+    searchInputEl.addEventListener('compositionend', function () {
+      searchComposing = false;
+      setSearchQuery(searchInputEl.value);
+    });
+    searchInputEl.addEventListener('input', function (e) {
+      if ((e && e.isComposing) || searchComposing) return;
+      setSearchQuery(searchInputEl.value);
+    });
+
+    /* 「元に戻す」のトーストは、マウスかフォーカスが乗っている間は消さない */
+    var toastHover = false, toastFocus = false;
+    toastEl.addEventListener('mouseenter', function () { toastHover = true; holdToast(); });
+    toastEl.addEventListener('mouseleave', function () { toastHover = false; if (!toastFocus) releaseToast(); });
+    toastEl.addEventListener('focusin', function () { toastFocus = true; holdToast(); });
+    toastEl.addEventListener('focusout', function () { toastFocus = false; if (!toastHover) releaseToast(); });
+
     fileInputEl = shadow.getElementById('file-input');
     shadow.getElementById('btn-export').addEventListener('click', doExport);
     shadow.getElementById('btn-import-file').addEventListener('click', function () {
@@ -882,11 +1121,26 @@
     });
 
     /* 編集・メモ入力は状態(editDraft/composerDraft)で守られるので、Escapeはいつでも格納できる。
-       🔴 日本語の変換中のEscは「変換の取り消し」なので閉じない */
+       🔴 日本語の変換中のEscは「変換の取り消し」なので閉じない。
+       検索を開いているときのEscは、まず検索を閉じて全部に戻す(もう一度でパネルを閉じる) */
     panelEl.addEventListener('keydown', function (e) {
-      if (e.key !== 'Escape' || IS_PAGE_MODE) return;
-      if (e.isComposing || e.keyCode === 229) return;
-      hidePanel();
+      if (e.key === 'Escape') {
+        if (e.isComposing || e.keyCode === 229) return;
+        if (searchOpen) {
+          if (e.preventDefault) e.preventDefault();
+          closeSearch();
+          return;
+        }
+        if (!IS_PAGE_MODE) hidePanel();
+        return;
+      }
+      /* Ctrl+Z(MacはCommand+Z)で、さっき消した項目を戻す(「元に戻す」が出ている間だけ)。
+         文字の入力欄の中では、文字の取り消しを優先する */
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')
+          && undoPending && !isTextEntry(e.target)) {
+        if (e.preventDefault) e.preventDefault();
+        doUndo();
+      }
     });
     /* パネル内のキー入力が、ページ側のショートカット(1文字キーで動くサイトなど)に届かないよう
        hostで止める。パネル自身の処理(上のEscなど)は中で先に済んでいる */
@@ -1054,10 +1308,33 @@
     btnNewMemoEl.style.display = currentTab === 'memos' ? '' : 'none';
     sortBoxEl.value = sortMode[currentTab];
 
+    /* 記録の一時停止の帯とボタン */
+    var showPaused = recordingPaused && !IS_WEB_APP;
+    pauseBarEl.classList.toggle('on', showPaused);
+    btnPauseEl.classList.toggle('on', showPaused);
+    btnPauseEl.setAttribute('aria-pressed', showPaused ? 'true' : 'false');
+
+    /* 検索の欄。🔴 入力欄の value にはここで触らない(変換中の文字を壊さないため) */
+    searchBarEl.classList.toggle('open', searchOpen);
+    btnSearchEl.classList.toggle('on', searchOpen);
+    btnSearchEl.setAttribute('aria-expanded', searchOpen ? 'true' : 'false');
+
     listEl.textContent = '';
     var kind = currentTab === 'clips' ? 'clip' : 'memo';
-    var items = L.sortForDisplay(currentTab === 'clips' ? data.clips : data.memos,
-      sortMode[currentTab]);
+    var all = currentTab === 'clips' ? data.clips : data.memos;
+    filtering = searchOpen && L.normalizeForSearch(searchQuery).trim() !== '';
+    var matched = filtering ? L.filterItems(all, searchQuery) : all;
+    var shown = matched;
+    /* 編集中の項目は、しぼりこみから外れても出し続ける(下書きを守る) */
+    if (filtering && editingId !== null && kind === editKind
+        && !matched.some(function (it) { return it.id === editingId; })) {
+      shown = matched.concat(all.filter(function (it) { return it.id === editingId; }));
+    }
+    var items = L.sortForDisplay(shown, sortMode[currentTab]);
+    if (searchOpen) {
+      searchCountEl.textContent = all.length + '件中' + matched.length + '件'
+        + (filtering && sortMode[currentTab] === 'manual' ? '（しぼりこみ中は並べ替えできません）' : '');
+    }
 
     var showComposer = composerOpen && kind === 'memo';
     var editOnThisTab = editingId !== null && kind === editKind;
@@ -1070,9 +1347,13 @@
 
     if (!items.length && !showComposer && !showOrphanEdit) {
       var em = el('div', 'empty');
-      em.textContent = currentTab === 'clips'
-        ? 'ページで文字をコピーすると、ここに残っていきます。\n「取り込む」ボタンで今のクリップボードも追加できます。'
-        : '「＋ 新しいメモ」から自由にメモを残せます。';
+      if (filtering) {
+        em.textContent = '「' + searchQuery.trim() + '」は見つかりませんでした';
+      } else {
+        em.textContent = currentTab === 'clips'
+          ? 'ページで文字をコピーすると、ここに残っていきます。\n「取り込む」ボタンで今のクリップボードも追加できます。'
+          : '「＋ 新しいメモ」から自由にメモを残せます。';
+      }
       listEl.appendChild(em);
     }
 
@@ -1081,6 +1362,19 @@
         listEl.appendChild(buildEditCard(items[i], kind));
       } else {
         listEl.appendChild(buildCard(items[i], kind));
+      }
+    }
+    /* 元に戻したカードへは1回だけフォーカスを置く。それ以外は作り直す前の場所へ戻す */
+    var fa = focusAfterRender;
+    focusAfterRender = null;
+    if (fa) {
+      for (var k = 0; k < listEl.children.length; k++) {
+        var fc = listEl.children[k];
+        if (fc.dataset && fc.dataset.fkey === fa.key) {
+          var ft = findAct(fc, fa.act) || findAct(fc, null);
+          if (ft) { try { ft.focus(); } catch (e) {} }
+          return;
+        }
       }
     }
     restoreListFocus(focusWas);
@@ -1148,7 +1442,8 @@
     card.appendChild(txt);
 
     var meta = el('div', 'meta');
-    if (sortMode[currentTab] === 'manual') {
+    /* しぼりこみ中は取っ手を出さない(並べ替えの位置があいまいになるため) */
+    if (sortMode[currentTab] === 'manual' && !filtering) {
       var grip = el('button', 'grip');
       grip.textContent = '⋮⋮';
       grip.title = 'ここを掴んで上下に動かすと順番を変えられます。Alt+上下の矢印キーでも動かせます';
@@ -1199,7 +1494,7 @@
         if (Date.now() - confirmDeleteAt < CONFIRM_GUARD_MS) return;
         confirmDeleteId = null;
         clearTimeout(confirmDeleteTimer);
-        sendOp({ op: 'remove', kind: kind, id: item.id });
+        deleteItem(kind, item);
       });
     } else {
       del = iconBtn('🗑️', '削除', function () {
