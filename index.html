@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="app-version" content="0.1.9">
+<meta name="app-version" content="0.2.0">
 <meta name="theme-color" content="#2EAD62">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="クリップメモ">
@@ -25,7 +25,9 @@ window.__SOYOGI_FUSEN_WEB = true;
   var msgListeners = [];
   var changeListeners = [];
   /* 保存できなかったとき(容量いっぱい・保存が使えない状態)に画面へ出す文言 */
-  var SAVE_FAIL_MSG = '保存できませんでした。保存できる量がいっぱいの可能性があります。いらない項目を消してから、もう一度お試しください';
+  var SAVE_FAIL_MSG = /^ja\b/i.test((navigator.languages && navigator.languages[0]) || navigator.language || 'ja')
+    ? '保存できませんでした。保存できる量がいっぱいの可能性があります。いらない項目を消してから、もう一度お試しください'
+    : 'Could not save. Storage may be full. Please delete items you do not need and try again';
 
   /* 🔴 Web版を2つ開いても、片方が古い中身で丸ごと上書きしないよう、
         中身をメモリに持たず、読むときも書く直前も毎回 localStorage から読み直す */

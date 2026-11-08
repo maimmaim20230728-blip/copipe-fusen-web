@@ -9,26 +9,26 @@
 
   /* 付箋の背景12色(わかりやすいパステル) */
   var COLORS = [
-    { id: 'yellow', hex: '#FFF176', name: '黄' },
-    { id: 'orange', hex: '#FFB74D', name: 'オレンジ' },
-    { id: 'pink',   hex: '#F48FB1', name: 'ピンク' },
-    { id: 'red',    hex: '#EF9A9A', name: '赤' },
-    { id: 'purple', hex: '#CE93D8', name: '紫' },
-    { id: 'blue',   hex: '#90CAF9', name: '青' },
-    { id: 'cyan',   hex: '#80DEEA', name: '水色' },
-    { id: 'green',  hex: '#A5D6A7', name: '緑' },
-    { id: 'lime',   hex: '#DCE775', name: '黄緑' },
-    { id: 'brown',  hex: '#BCAAA4', name: '茶' },
-    { id: 'gray',   hex: '#CFD8DC', name: 'グレー' },
-    { id: 'white',  hex: '#FFFFFF', name: '白' }
+    { id: 'yellow', hex: '#FFF176', name: '黄', en: 'Yellow' },
+    { id: 'orange', hex: '#FFB74D', name: 'オレンジ', en: 'Orange' },
+    { id: 'pink',   hex: '#F48FB1', name: 'ピンク', en: 'Pink' },
+    { id: 'red',    hex: '#EF9A9A', name: '赤', en: 'Red' },
+    { id: 'purple', hex: '#CE93D8', name: '紫', en: 'Purple' },
+    { id: 'blue',   hex: '#90CAF9', name: '青', en: 'Blue' },
+    { id: 'cyan',   hex: '#80DEEA', name: '水色', en: 'Light blue' },
+    { id: 'green',  hex: '#A5D6A7', name: '緑', en: 'Green' },
+    { id: 'lime',   hex: '#DCE775', name: '黄緑', en: 'Yellow green' },
+    { id: 'brown',  hex: '#BCAAA4', name: '茶', en: 'Brown' },
+    { id: 'gray',   hex: '#CFD8DC', name: 'グレー', en: 'Gray' },
+    { id: 'white',  hex: '#FFFFFF', name: '白', en: 'White' }
   ];
 
   /* 文字色は4色のみ */
   var TEXT_COLORS = [
-    { id: 'black',    hex: '#1B1B1B', name: '黒' },
-    { id: 'darkgray', hex: '#555555', name: '濃いグレー' },
-    { id: 'red',      hex: '#D32F2F', name: '赤' },
-    { id: 'white',    hex: '#FFFFFF', name: '白' }
+    { id: 'black',    hex: '#1B1B1B', name: '黒', en: 'Black' },
+    { id: 'darkgray', hex: '#555555', name: '濃いグレー', en: 'Dark gray' },
+    { id: 'red',      hex: '#D32F2F', name: '赤', en: 'Red' },
+    { id: 'white',    hex: '#FFFFFF', name: '白', en: 'White' }
   ];
 
   var seq = 0;
@@ -142,14 +142,14 @@
 
   /* 並べ替えの種類。🔴どれを選んでもピン止めは必ず最上段(ピン優先はアプリの芯) */
   var SORT_MODES = [
-    { id: 'new', name: '新しい順' },
-    { id: 'old', name: '古い順' },
-    { id: 'text', name: 'あいうえお順' },
-    { id: 'color', name: '色ごと' },
+    { id: 'new', name: '新しい順', en: 'Newest first' },
+    { id: 'old', name: '古い順', en: 'Oldest first' },
+    { id: 'text', name: 'あいうえお順', en: 'A to Z' },
+    { id: 'color', name: '色ごと', en: 'By color' },
     /* 🔴 これだけはピン止めを最上段に強制しない。
           利用者が自分で並べた通りに出さないと、掴んで動かしても戻ってしまうため。
           ピン止めは「自動で消えない」という意味は保ったまま */
-    { id: 'manual', name: '自分の並び' }
+    { id: 'manual', name: '自分の並び', en: 'My order' }
   ];
 
   function isSortMode(id) {

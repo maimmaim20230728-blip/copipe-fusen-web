@@ -62,7 +62,25 @@
   var saveStateTimer = null;
   var resizeClampTimer = null;
 
-  var SAVE_FAIL_MSG = '保存できませんでした。ページを再読み込みしてください';
+  /* 画面の言葉。ブラウザの言語が日本語なら日本語、それ以外は英語 */
+  var LANG = (function () {
+    try {
+      var l = (navigator.languages && navigator.languages[0]) || navigator.language || '';
+      if (!l) return 'ja';
+      return /^ja\b/i.test(l) ? 'ja' : 'en';
+    } catch (e) { return 'ja'; }
+  })();
+  function T(ja, en) { return LANG === 'ja' ? ja : en; }
+  /* 色や並べ替えの名前(store_logic.js の name / en) */
+  function nm(o) { return LANG === 'ja' ? o.name : (o.en || o.name); }
+  /* store_logic.js が投げる読み込みエラーの文言 */
+  var ERR_EN = {
+    'ファイルの形式が違います': 'The file format is not correct',
+    'このアプリのバックアップではありません': 'This is not a backup file from this app'
+  };
+  function trErr(m) { return LANG === 'ja' ? m : (ERR_EN[m] || m); }
+
+  var SAVE_FAIL_MSG = T('保存できませんでした。ページを再読み込みしてください', 'Could not save. Please reload the page');
   /* 🗑️をダブルクリックすると、2打目が切り替わった「削除する」に当たって素通りする。
      切り替わってからこの間のクリックは受け付けない */
   var CONFIRM_GUARD_MS = 600;
@@ -474,8 +492,8 @@
   /* ---------- クリップボード操作 ---------- */
   /* 🔴 できたときだけ「コピーしました」。両方のやり方でだめなら、そう伝える */
   function copyText(text) {
-    var ok = function () { toast('コピーしました'); };
-    var ng = function () { toast('コピーできませんでした'); };
+    var ok = function () { toast(T('コピーしました', 'Copied')); };
+    var ng = function () { toast(T('コピーできませんでした', 'Could not copy')); };
     var viaFallback = function () { if (fallbackCopy(text)) ok(); else ng(); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(ok, viaFallback);
@@ -504,16 +522,16 @@
   }
 
   function importClipboard() {
-    var fail = function () { toast('読み取れませんでした'); };
+    var fail = function () { toast(T('読み取れませんでした', 'Could not read the clipboard')); };
     if (!extAlive()) { toast(SAVE_FAIL_MSG); return; }
     try {
       chrome.runtime.sendMessage({ type: 'soyogi-fusen-read-clipboard' }).then(function (res) {
         if (res && res.ok && res.text && res.text.trim()) {
           saveOp({ op: 'addClip', text: res.text }).then(function () {
-            toast('取り込みました');
+            toast(T('取り込みました', 'Added'));
           }, toast);
         } else if (res && res.ok) {
-          toast('クリップボードに文字がありません');
+          toast(T('クリップボードに文字がありません', 'There is no text on the clipboard'));
         } else {
           fail();
         }
@@ -634,7 +652,7 @@
     ids[j] = item.id;
     saveOrder(kind, ids);
     render();   // フォーカスは動かしたカードの取っ手に戻る
-    toast((j + 1) + '番目に動かしました');
+    toast(T((j + 1) + '番目に動かしました', 'Moved to position ' + (j + 1)));
   }
 
   /* ---------- 小窓で開く ---------- */
@@ -647,13 +665,13 @@
       if (p && p.then) {
         p.then(function (res) {
           if (res && res.ok) hidePanel();
-          else toast('小窓を開けませんでした');
-        }, function () { toast('小窓を開けませんでした'); });
+          else toast(T('小窓を開けませんでした', 'Could not open the small window'));
+        }, function () { toast(T('小窓を開けませんでした', 'Could not open the small window')); });
       } else {
         hidePanel();
       }
     } catch (e) {
-      toast('小窓を開けませんでした');
+      toast(T('小窓を開けませんでした', 'Could not open the small window'));
     }
   }
 
@@ -670,7 +688,7 @@
       render();
       /* 帯の「再開する」で再開したら帯が消えるので、ヘッダーのボタンへフォーカスを移す */
       if (fromBar) { try { btnPauseEl.focus(); } catch (e2) {} }
-      toast(next ? '記録を止めました。「取り込む」とメモは使えます' : '記録を再開しました');
+      toast(next ? T('記録を止めました。「取り込む」とメモは使えます', 'Recording paused. Add and memos still work') : T('記録を再開しました', 'Recording resumed'));
     }, toast);
   }
 
@@ -717,9 +735,9 @@
     var snapshot = Object.assign({}, latest || item);
     saveOp({ op: 'remove', kind: kind, id: item.id }).then(function () {
       var u = { kind: kind, item: snapshot };
-      toast('削除しました', {
-        label: '元に戻す',
-        title: '元に戻す（Ctrl+Z でも戻せます）',
+      toast(T('削除しました', 'Deleted'), {
+        label: T('元に戻す', 'Undo'),
+        title: T('元に戻す（Ctrl+Z でも戻せます）', 'Undo (Ctrl+Z also works)'),
         ms: UNDO_MS,
         onClick: doUndo,
         onHide: function () { if (undoPending === u) undoPending = null; }
@@ -742,7 +760,7 @@
         focusAfterRender = { key: u.item.id, act: 'del' };
         render();
       }
-      toast('元に戻しました');
+      toast(T('元に戻しました', 'Restored'));
     }, toast);
   }
 
@@ -767,9 +785,9 @@
       a.click();
       a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
-      toast('書き出しました');
+      toast(T('書き出しました', 'Exported'));
     } catch (e) {
-      toast('書き出せませんでした');
+      toast(T('書き出せませんでした', 'Could not export'));
     }
   }
 
@@ -781,7 +799,7 @@
     if (!f) return;
     /* バックアップは大きくても数MB。それより桁違いに大きいものは読まずに弾く */
     if (f.size > MAX_IMPORT_BYTES) {
-      toast('ファイルが大きすぎます');
+      toast(T('ファイルが大きすぎます', 'The file is too large'));
       fileInputEl.value = '';
       return;
     }
@@ -791,7 +809,7 @@
       try {
         parsed = L.parseBackup(String(reader.result), Date.now());
       } catch (e) {
-        toast(String((e && e.message) || 'このファイルは読み込めません'));
+        toast(trErr(String((e && e.message) || 'このファイルは読み込めません')));
         fileInputEl.value = '';
         return;
       }
@@ -801,14 +819,14 @@
         var b = (res && res.addedMemos) || 0;
         var d = (res && res.dropped) || 0;
         var msg = a + b === 0
-          ? '新しく増えるものはありませんでした'
-          : '読み込みました（履歴' + a + '件・メモ' + b + '件）';
-        if (d > 0) msg += '。上限のため古い' + d + '件を整理しました';
+          ? T('新しく増えるものはありませんでした', 'Nothing new to add')
+          : T('読み込みました（履歴' + a + '件・メモ' + b + '件）', 'Imported (history ' + a + ', memos ' + b + ')');
+        if (d > 0) msg += T('。上限のため古い' + d + '件を整理しました', '. ' + d + ' older item(s) were removed because of the limit');
         toast(msg);
       }, toast);
     };
     reader.onerror = function () {
-      toast('ファイルを開けませんでした');
+      toast(T('ファイルを開けませんでした', 'Could not open the file'));
       fileInputEl.value = '';
     };
     reader.readAsText(f);
@@ -958,49 +976,50 @@
     shadow.appendChild(style);
 
     panelEl = el('div', 'panel' + (IS_PAGE_MODE ? ' page-mode' : ''));
-    /* 英語のページの上でも日本語として読み上げられるように */
-    panelEl.setAttribute('lang', 'ja');
-    panelEl.setAttribute('aria-label', '便利クリップメモ・そよぎ');
+    /* ページの言語に関係なく、画面の言葉の言語で読み上げられるように */
+    panelEl.setAttribute('lang', LANG);
+    panelEl.setAttribute('aria-label', T('便利クリップメモ・そよぎ', 'Handy Clip Memo - Soyogi'));
+    if (IS_PAGE_MODE) { try { document.title = T('便利クリップメモ・そよぎ', 'Handy Clip Memo - Soyogi'); document.documentElement.setAttribute('lang', LANG); } catch (e) {} }
     panelEl.setAttribute('role', IS_PAGE_MODE ? 'main' : 'dialog');
     /* アイコンで開いたとき、ここにフォーカスを置く(Tabで中のボタンへ進める) */
     panelEl.setAttribute('tabindex', '-1');
     panelEl.innerHTML = [
       '<div class="hdr" id="hdr">',
       '  <span class="logo" aria-hidden="true">📋</span>',
-      '  <span class="ttl">便利クリップメモ・そよぎ</span>',
+      '  <span class="ttl">' + T('便利クリップメモ・そよぎ', 'Handy Clip Memo - Soyogi') + '</span>',
       '  <span class="hdr-actions">',
-      '    <button class="iconbtn" id="btn-search" title="さがす（いま見ている一覧を文字でしぼりこむ）" aria-label="さがす（いま見ている一覧を文字でしぼりこむ）" aria-expanded="false" aria-controls="searchbar">🔍</button>',
-      '    <button class="iconbtn" id="btn-pause" title="コピーの自動記録を一時停止" aria-label="コピーの自動記録を一時停止" aria-pressed="false">⏸</button>',
-      '    <button class="iconbtn win" id="btn-window" title="小窓で開く（ブラウザとは別の小さな窓にする）" aria-label="小窓で開く（ブラウザとは別の小さな窓にする）">🪟</button>',
-      '    <button class="iconbtn bak" id="btn-export" title="書き出し（今の中身をファイルに保存）" aria-label="書き出し（今の中身をファイルに保存）">💾</button>',
-      '    <button class="iconbtn bak" id="btn-import-file" title="読み込み（保存したファイルの中身を、今のものに足す）" aria-label="読み込み（保存したファイルの中身を、今のものに足す）">📂</button>',
-      '    <button class="iconbtn" id="btn-close" title="しまう(拡張機能アイコンで再表示)" aria-label="しまう(拡張機能アイコンで再表示)">✕</button>',
+      '    <button class="iconbtn" id="btn-search" title="' + T('さがす（いま見ている一覧を文字でしぼりこむ）', 'Search (filter the current list by text)') + '" aria-label="' + T('さがす（いま見ている一覧を文字でしぼりこむ）', 'Search (filter the current list by text)') + '" aria-expanded="false" aria-controls="searchbar">🔍</button>',
+      '    <button class="iconbtn" id="btn-pause" title="' + T('コピーの自動記録を一時停止', 'Pause automatic recording of copies') + '" aria-label="' + T('コピーの自動記録を一時停止', 'Pause automatic recording of copies') + '" aria-pressed="false">⏸</button>',
+      '    <button class="iconbtn win" id="btn-window" title="' + T('小窓で開く（ブラウザとは別の小さな窓にする）', 'Open in a small window (separate from the browser)') + '" aria-label="' + T('小窓で開く（ブラウザとは別の小さな窓にする）', 'Open in a small window (separate from the browser)') + '">🪟</button>',
+      '    <button class="iconbtn bak" id="btn-export" title="' + T('書き出し（今の中身をファイルに保存）', 'Export (save everything to a file)') + '" aria-label="' + T('書き出し（今の中身をファイルに保存）', 'Export (save everything to a file)') + '">💾</button>',
+      '    <button class="iconbtn bak" id="btn-import-file" title="' + T('読み込み（保存したファイルの中身を、今のものに足す）', 'Import (add the contents of a saved file)') + '" aria-label="' + T('読み込み（保存したファイルの中身を、今のものに足す）', 'Import (add the contents of a saved file)') + '">📂</button>',
+      '    <button class="iconbtn" id="btn-close" title="' + T('しまう(拡張機能アイコンで再表示)', 'Hide (click the extension icon to show again)') + '" aria-label="' + T('しまう(拡張機能アイコンで再表示)', 'Hide (click the extension icon to show again)') + '">✕</button>',
       '  </span>',
       '</div>',
       '<div class="pausebar" id="pausebar">',
-      '  <span class="pausebar-txt">⏸ 記録を止めています（ページでコピーしても残りません）</span>',
-      '  <button class="pausebar-btn" id="btn-resume">再開する</button>',
+      '  <span class="pausebar-txt">⏸ ' + T('記録を止めています（ページでコピーしても残りません）', 'Recording is paused (copies on pages are not saved)') + '</span>',
+      '  <button class="pausebar-btn" id="btn-resume">' + T('再開する', 'Resume') + '</button>',
       '</div>',
       '<input type="file" id="file-input" accept="application/json,.json" style="display:none">',
-      '<div class="tabs" role="tablist" aria-label="表示する一覧">',
+      '<div class="tabs" role="tablist" aria-label="' + T('表示する一覧', 'List to show') + '">',
       '  <button class="tab" id="tab-clips" role="tab" aria-controls="list"></button>',
       '  <button class="tab" id="tab-memos" role="tab" aria-controls="list"></button>',
       '</div>',
       '<div class="toolbar">',
       '  <button class="btn" id="btn-import">',
-      '    <span class="lbl-full">📥 いまのクリップボードを取り込む</span>',
-      '    <span class="lbl-min">📥 取り込む</span>',
+      '    <span class="lbl-full">📥 ' + T('いまのクリップボードを取り込む', 'Add from clipboard') + '</span>',
+      '    <span class="lbl-min">📥 ' + T('取り込む', 'Add') + '</span>',
       '  </button>',
       '  <button class="btn" id="btn-newmemo">',
-      '    <span class="lbl-full">＋ 新しいメモ</span>',
-      '    <span class="lbl-min">＋ メモ</span>',
+      '    <span class="lbl-full">＋ ' + T('新しいメモ', 'New memo') + '</span>',
+      '    <span class="lbl-min">＋ ' + T('メモ', 'Memo') + '</span>',
       '  </button>',
-      '  <select class="sortbox" id="sortbox" aria-label="並べ替え" title="並べ替え（「自分の並び」以外では、ピン止めが一番上に来ます）"></select>',
+      '  <select class="sortbox" id="sortbox" aria-label="' + T('並べ替え', 'Sort') + '" title="' + T('並べ替え（「自分の並び」以外では、ピン止めが一番上に来ます）', 'Sort (pinned items come first, except in My order)') + '"></select>',
       '</div>',
       '<div class="searchbar" id="searchbar" role="search">',
-      '  <input type="text" id="search-input" placeholder="さがす文字" autocomplete="off" enterkeyhint="search" aria-label="さがす文字（いま見ている一覧をしぼりこむ）">',
+      '  <input type="text" id="search-input" placeholder="' + T('さがす文字', 'Search text') + '" autocomplete="off" enterkeyhint="search" aria-label="' + T('さがす文字（いま見ている一覧をしぼりこむ）', 'Search text (filter the current list)') + '">',
       '  <span class="count" id="search-count" aria-live="polite"></span>',
-      '  <button class="iconbtn" id="btn-search-close" title="さがすのをやめる（Esc）" aria-label="さがすのをやめる（Esc）">✕</button>',
+      '  <button class="iconbtn" id="btn-search-close" title="' + T('さがすのをやめる（Esc）', 'Close search (Esc)') + '" aria-label="' + T('さがすのをやめる（Esc）', 'Close search (Esc)') + '">✕</button>',
       '</div>',
       '<div class="list" id="list" role="tabpanel"></div>',
       '<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>'
@@ -1024,7 +1043,7 @@
     L.SORT_MODES.forEach(function (m) {
       var o = document.createElement('option');
       o.value = m.id;
-      o.textContent = m.name;
+      o.textContent = nm(m);
       sortBoxEl.appendChild(o);
     });
     sortBoxEl.addEventListener('change', function () {
@@ -1292,10 +1311,10 @@
     pendingRender = false;
     var focusWas = captureListFocus();
 
-    setTabLabel(tabClipsEl, 'コピー履歴 ' + data.clips.length + '/' + L.MAX_ITEMS,
-      '履歴 ' + data.clips.length);
-    setTabLabel(tabMemosEl, 'メモ ' + data.memos.length + '/' + L.MAX_ITEMS,
-      'メモ ' + data.memos.length);
+    setTabLabel(tabClipsEl, T('コピー履歴 ', 'Copy history ') + data.clips.length + '/' + L.MAX_ITEMS,
+      T('履歴 ', 'History ') + data.clips.length);
+    setTabLabel(tabMemosEl, T('メモ ', 'Memos ') + data.memos.length + '/' + L.MAX_ITEMS,
+      T('メモ ', 'Memos ') + data.memos.length);
     tabClipsEl.classList.toggle('on', currentTab === 'clips');
     tabMemosEl.classList.toggle('on', currentTab === 'memos');
     tabClipsEl.setAttribute('aria-selected', currentTab === 'clips' ? 'true' : 'false');
@@ -1332,8 +1351,8 @@
     }
     var items = L.sortForDisplay(shown, sortMode[currentTab]);
     if (searchOpen) {
-      searchCountEl.textContent = all.length + '件中' + matched.length + '件'
-        + (filtering && sortMode[currentTab] === 'manual' ? '（しぼりこみ中は並べ替えできません）' : '');
+      searchCountEl.textContent = T(all.length + '件中' + matched.length + '件', matched.length + ' of ' + all.length)
+        + (filtering && sortMode[currentTab] === 'manual' ? T('（しぼりこみ中は並べ替えできません）', ' (cannot reorder while searching)') : '');
     }
 
     var showComposer = composerOpen && kind === 'memo';
@@ -1348,11 +1367,11 @@
     if (!items.length && !showComposer && !showOrphanEdit) {
       var em = el('div', 'empty');
       if (filtering) {
-        em.textContent = '「' + searchQuery.trim() + '」は見つかりませんでした';
+        em.textContent = T('「' + searchQuery.trim() + '」は見つかりませんでした', 'No results for "' + searchQuery.trim() + '"');
       } else {
         em.textContent = currentTab === 'clips'
-          ? 'ページで文字をコピーすると、ここに残っていきます。\n「取り込む」ボタンで今のクリップボードも追加できます。'
-          : '「＋ 新しいメモ」から自由にメモを残せます。';
+          ? T('ページで文字をコピーすると、ここに残っていきます。\n「取り込む」ボタンで今のクリップボードも追加できます。', 'Text you copy on web pages is saved here.\nUse the Add button to add what is on the clipboard now.')
+          : T('「＋ 新しいメモ」から自由にメモを残せます。', 'Use "+ New memo" to write memos freely.');
       }
       listEl.appendChild(em);
     }
@@ -1387,22 +1406,22 @@
     var ta = document.createElement('textarea');
     ta.value = composerDraft;
     ta.maxLength = L.MAX_TEXT;
-    ta.placeholder = 'メモを入力…';
-    ta.setAttribute('aria-label', '新しいメモ');
+    ta.placeholder = T('メモを入力…', 'Write a memo…');
+    ta.setAttribute('aria-label', T('新しいメモ', 'New memo'));
     ta.dataset.act = 'new-text';
     ta.addEventListener('input', function () { composerDraft = ta.value; });
     var row = el('div', 'editrow');
-    var cancel = textBtn('キャンセル', function () {
+    var cancel = textBtn(T('キャンセル', 'Cancel'), function () {
       composerOpen = false;
       composerDraft = '';
       render();
     }, 'sub', 'new-cancel');
     /* 🔴 下書きは「保存できた」と返事が来てから消す。失敗したら残したまま知らせる */
-    var save = textBtn('保存', function () {
+    var save = textBtn(T('保存', 'Save'), function () {
       if (composerSaving) return;
       var v = ta.value;
       composerDraft = v;
-      if (!v.trim()) { toast('文字を入力してください'); return; }
+      if (!v.trim()) { toast(T('文字を入力してください', 'Please enter some text')); return; }
       composerSaving = true;
       saveOp({ op: 'addMemo', text: v }).then(function () {
         composerSaving = false;
@@ -1435,9 +1454,9 @@
 
     var txt = el('div', 'txt clamp');
     txt.style.color = L.textColorHex(item.textColor);
-    txt.textContent = item.text || (kind === 'memo' ? '(空のメモ)' : '(空)');
+    txt.textContent = item.text || (kind === 'memo' ? T('(空のメモ)', '(empty memo)') : T('(空)', '(empty)'));
     if (!item.text) txt.style.opacity = '.55';
-    txt.title = 'クリックで全文表示/折りたたみ';
+    txt.title = T('クリックで全文表示/折りたたみ', 'Click to show all / fold');
     txt.addEventListener('click', function () { txt.classList.toggle('clamp'); });
     card.appendChild(txt);
 
@@ -1446,7 +1465,7 @@
     if (sortMode[currentTab] === 'manual' && !filtering) {
       var grip = el('button', 'grip');
       grip.textContent = '⋮⋮';
-      grip.title = 'ここを掴んで上下に動かすと順番を変えられます。Alt+上下の矢印キーでも動かせます';
+      grip.title = T('ここを掴んで上下に動かすと順番を変えられます。Alt+上下の矢印キーでも動かせます', 'Drag this up or down to change the order. Alt + Up/Down arrow keys also work');
       grip.setAttribute('aria-label', grip.title);
       grip.dataset.act = 'grip';
       grip.addEventListener('pointerdown', function (e) { beginDrag(e, card, grip, kind); });
@@ -1462,22 +1481,22 @@
     meta.appendChild(time);
 
     /* 🔴「自分の並び」ではピン止めも置いた場所に留まるので「常に上」とは書かない */
-    var pin = iconBtn('📌', item.pinned ? 'ピン止めを外す'
-      : 'ピン止め（自動で消えません。「自分の並び」以外では一番上に出ます）', function () {
+    var pin = iconBtn('📌', item.pinned ? T('ピン止めを外す', 'Unpin')
+      : T('ピン止め（自動で消えません。「自分の並び」以外では一番上に出ます）', 'Pin (never removed automatically; shown first except in My order)'), function () {
       sendOp({ op: 'togglePin', kind: kind, id: item.id });
     }, item.pinned, 'pin');
     pin.setAttribute('aria-pressed', item.pinned ? 'true' : 'false');
     meta.appendChild(pin);
 
-    meta.appendChild(iconBtn('📋', 'クリップボードにコピー', function () {
+    meta.appendChild(iconBtn('📋', T('クリップボードにコピー', 'Copy to clipboard'), function () {
       copyText(item.text);
     }, false, 'copy'));
 
-    meta.appendChild(iconBtn('✏️', '編集', function () {
+    meta.appendChild(iconBtn('✏️', T('編集', 'Edit'), function () {
       startEdit(item, kind);
     }, false, 'edit'));
 
-    var colorBtn = iconBtn('🎨', '色を変える', function () {
+    var colorBtn = iconBtn('🎨', T('色を変える', 'Change color'), function () {
       paletteOpenId = paletteOpenId === item.id ? null : item.id;
       render();
     }, false, 'color');
@@ -1487,7 +1506,7 @@
     var del;
     if (confirmDeleteId === item.id) {
       del = el('button', 'iconbtn danger');
-      del.textContent = '削除する';
+      del.textContent = T('削除する', 'Confirm delete');
       del.dataset.act = 'del';
       del.addEventListener('click', function () {
         /* 🔴 🗑️のダブルクリックの2打目がここに当たって素通りしないよう、切り替わって直後は無視 */
@@ -1497,7 +1516,7 @@
         deleteItem(kind, item);
       });
     } else {
-      del = iconBtn('🗑️', '削除', function () {
+      del = iconBtn('🗑️', T('削除', 'Delete'), function () {
         confirmDeleteId = item.id;
         confirmDeleteAt = Date.now();
         clearTimeout(confirmDeleteTimer);
@@ -1525,8 +1544,8 @@
     L.COLORS.forEach(function (c) {
       var s = el('button', 'sw');
       s.style.background = c.hex;
-      s.title = c.name;
-      s.setAttribute('aria-label', c.name);
+      s.title = nm(c);
+      s.setAttribute('aria-label', nm(c));
       s.setAttribute('aria-pressed', item.color === c.id ? 'true' : 'false');
       s.dataset.act = 'sw-' + c.id;
       if (item.color === c.id) s.classList.add('on');
@@ -1538,10 +1557,10 @@
     pal.appendChild(el('span', 'sep'));
     L.TEXT_COLORS.forEach(function (t) {
       var s = el('button', 'sw txtsw');
-      s.textContent = 'あ';
+      s.textContent = T('あ', 'A');
       s.style.color = t.hex;
       s.style.background = t.id === 'white' ? '#8a8a8a' : '#f2f2f2';
-      s.title = '文字色: ' + t.name;
+      s.title = T('文字色: ', 'Text color: ') + nm(t);
       s.setAttribute('aria-label', s.title);
       s.setAttribute('aria-pressed', item.textColor === t.id ? 'true' : 'false');
       s.dataset.act = 'tc-' + t.id;
@@ -1562,7 +1581,7 @@
   }
 
   function startEdit(item, kind) {
-    if (editingId) { toast('別の項目を編集中です'); return; }
+    if (editingId) { toast(T('別の項目を編集中です', 'Another item is being edited')); return; }
     editingId = item.id;
     editKind = kind;
     editDraft = item.text;
@@ -1581,16 +1600,16 @@
     var ta = document.createElement('textarea');
     ta.value = editDraft;
     ta.maxLength = L.MAX_TEXT;
-    ta.setAttribute('aria-label', '編集中の文');
+    ta.setAttribute('aria-label', T('編集中の文', 'Text being edited'));
     ta.dataset.act = 'edit-text';
     ta.addEventListener('input', function () { editDraft = ta.value; });
     var row = el('div', 'editrow');
-    var cancel = textBtn('キャンセル', function () {
+    var cancel = textBtn(T('キャンセル', 'Cancel'), function () {
       clearEditState();
       render();
     }, 'sub', 'edit-cancel');
     /* 🔴 編集状態(下書き)は「保存できた」と返事が来てから閉じる。失敗したら残したまま知らせる */
-    var save = textBtn('保存', function () {
+    var save = textBtn(T('保存', 'Save'), function () {
       if (editSaving) return;
       var v = ta.value;
       editDraft = v;
@@ -1608,7 +1627,7 @@
       editSaving = true;
       saveOp(op).then(function () {
         editSaving = false;
-        if (!stillThere) toast('元の項目が消えていたため、新しく保存しました');
+        if (!stillThere) toast(T('元の項目が消えていたため、新しく保存しました', 'The original item was gone, so it was saved as new'));
         if (editingId !== id) return;   // 返事を待つ間にキャンセルされた
         clearEditState();
         render();
