@@ -173,6 +173,27 @@ window.__SOYOGI_FUSEN_WEB = true;
 <script src="./store_logic.js"></script>
 <script src="./content.js"></script>
 <script>
+/* Web版だけの上余白(拡張の content.js と同期で消えないよう、ここで足す)。
+   iPhoneのカメラ(ノッチ)のそばで見えない・押せない部分が出ないよう、上のバーの上の余白を
+   10px→18px にする。ノッチ分(env(safe-area-inset-top))は content.js 側のパネルに入っている。
+   中身は shadow DOM なので、ホストができたら style を足す(作り直されても足し直す) */
+(function () {
+  var CSS = '.panel.page-mode .hdr { padding-top: 18px; }' +
+    '@container (max-width: 330px) { .panel.page-mode .hdr { padding-top: 15px; } }';
+  function patch() {
+    var host = document.getElementById('soyogi-fusen-host');
+    var sr = host && host.shadowRoot;
+    if (!sr || sr.querySelector('style[data-web-topgap]')) return;
+    var st = document.createElement('style');
+    st.setAttribute('data-web-topgap', '1');
+    st.textContent = CSS;
+    sr.appendChild(st);
+  }
+  new MutationObserver(patch).observe(document.documentElement, { childList: true, subtree: true });
+  patch();
+})();
+</script>
+<script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(function () {});
 }
