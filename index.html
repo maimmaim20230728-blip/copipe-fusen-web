@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="app-version" content="0.2.0">
+<meta name="app-version" content="0.2.1">
 <meta name="theme-color" content="#2EAD62">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="クリップメモ">
@@ -25,9 +25,16 @@ window.__SOYOGI_FUSEN_WEB = true;
   var msgListeners = [];
   var changeListeners = [];
   /* 保存できなかったとき(容量いっぱい・保存が使えない状態)に画面へ出す文言 */
-  var SAVE_FAIL_MSG = /^ja\b/i.test((navigator.languages && navigator.languages[0]) || navigator.language || 'ja')
-    ? '保存できませんでした。保存できる量がいっぱいの可能性があります。いらない項目を消してから、もう一度お試しください'
-    : 'Could not save. Storage may be full. Please delete items you do not need and try again';
+  /* 言語は画面の言語ボタンで選んだもの(uiLang)を優先し、無ければブラウザの言語 */
+  function saveFailMsg() {
+    var lang = readStore().uiLang;
+    if (lang !== 'ja' && lang !== 'en') {
+      lang = /^ja\b/i.test((navigator.languages && navigator.languages[0]) || navigator.language || 'ja') ? 'ja' : 'en';
+    }
+    return lang === 'ja'
+      ? '保存できませんでした。保存できる量がいっぱいの可能性があります。いらない項目を消してから、もう一度お試しください'
+      : 'Could not save. Storage may be full. Please delete items you do not need and try again';
+  }
 
   /* 🔴 Web版を2つ開いても、片方が古い中身で丸ごと上書きしないよう、
         中身をメモリに持たず、読むときも書く直前も毎回 localStorage から読み直す */
@@ -108,7 +115,7 @@ window.__SOYOGI_FUSEN_WEB = true;
         /* clipsとmemosを1回の書き込みでまとめて足す(拡張のbackground.jsと同じ) */
         var rc = L.mergeItems(store.clips || [], msg.clips || [], now);
         var rm = L.mergeItems(store.memos || [], msg.memos || [], now);
-        if (!applySet({ clips: rc.list, memos: rm.list })) return { ok: false, message: SAVE_FAIL_MSG };
+        if (!applySet({ clips: rc.list, memos: rm.list })) return { ok: false, message: saveFailMsg() };
         return {
           ok: true, addedClips: rc.added, addedMemos: rm.added,
           skipped: rc.skipped + rm.skipped, dropped: rc.dropped + rm.dropped
@@ -118,7 +125,7 @@ window.__SOYOGI_FUSEN_WEB = true;
     var patch = {};
     patch[key] = next;
     /* 🔴 書けなかったことを握りつぶさない(content.js が下書きを残して文言を出す) */
-    if (!applySet(patch)) return { ok: false, message: SAVE_FAIL_MSG };
+    if (!applySet(patch)) return { ok: false, message: saveFailMsg() };
     return { ok: true };
   }
 
@@ -154,7 +161,7 @@ window.__SOYOGI_FUSEN_WEB = true;
         set: function (obj, cb) {
           var ok = applySet(obj);
           if (cb) setTimeout(cb, 0);
-          return ok ? Promise.resolve() : Promise.reject(new Error(SAVE_FAIL_MSG));
+          return ok ? Promise.resolve() : Promise.reject(new Error(saveFailMsg()));
         }
       },
       onChanged: { addListener: function (f) { changeListeners.push(f); } }

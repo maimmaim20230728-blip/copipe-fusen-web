@@ -62,14 +62,17 @@
   var saveStateTimer = null;
   var resizeClampTimer = null;
 
-  /* 画面の言葉。ブラウザの言語が日本語なら日本語、それ以外は英語 */
-  var LANG = (function () {
+  /* 画面の言葉。ヘッダーの言語ボタンで選んだもの(storage の uiLang)を優先し、
+     選んでいなければブラウザの言語が日本語なら日本語、それ以外は英語 */
+  var LANG_AUTO = (function () {
     try {
       var l = (navigator.languages && navigator.languages[0]) || navigator.language || '';
       if (!l) return 'ja';
       return /^ja\b/i.test(l) ? 'ja' : 'en';
     } catch (e) { return 'ja'; }
   })();
+  var LANG = LANG_AUTO;
+  function validLang(v) { return v === 'ja' || v === 'en' ? v : null; }
   function T(ja, en) { return LANG === 'ja' ? ja : en; }
   /* 色や並べ替えの名前(store_logic.js の name / en) */
   function nm(o) { return LANG === 'ja' ? o.name : (o.en || o.name); }
@@ -134,6 +137,8 @@
     '.iconbtn.on { background: #23804a; color: #ffffff; }',
     '.iconbtn.danger { background: #c9302c; color: #fff; font-size: 12px; font-weight: 700;',
     '  width: auto; padding: 0 10px; }',
+    /* 言語の切り替え(「EN」/「日本語」の文字で出す) */
+    '.hdr .iconbtn.langbtn { width: auto; min-width: 30px; padding: 0 6px; font-size: 12px; font-weight: 700; color: #1d5e37; }',
     '.tabs { display: flex; background: #f7faf8; border-bottom: 1px solid #ddd; flex: none; }',
     '.tab { flex: 1; border: none; background: none; padding: 10px 4px; text-align: center;',
     '  cursor: pointer; font-size: 13px; color: #555; border-bottom: 3px solid transparent; }',
@@ -269,7 +274,7 @@
     '  .toast-act { margin: 4px 0 0; }',
     /* この幅でバックアップや窓の切り替えはしないので隠す(広げれば出る)。
        ロゴも隠して、検索・一時停止・しまうの3つを1列に収める */
-    '  .bak, .win, .logo { display: none; }',
+    '  .bak, .win, .logo, .langbtn { display: none; }',
     '  .pausebar, .searchbar { padding: 5px 5px; font-size: 11px; }',
     '  .searchbar .count { font-size: 11px; }',
     '}'
@@ -835,7 +840,8 @@
   /* ---------- データ読み込み・監視 ---------- */
   function loadData(cb) {
     try {
-      chrome.storage.local.get({ clips: [], memos: [], panelState: null, recordingPaused: false }, function (res) {
+      chrome.storage.local.get({ clips: [], memos: [], panelState: null, recordingPaused: false, uiLang: null }, function (res) {
+        if (validLang(res.uiLang)) applyLang(res.uiLang);
         data.clips = res.clips || [];
         data.memos = res.memos || [];
         if (!IS_WEB_APP) recordingPaused = !!res.recordingPaused;
@@ -862,6 +868,8 @@
         dirty = true;
       }
       if (IS_TOP) {
+        /* 別のタブや小窓で言語を切り替えたら、こちらも合わせる */
+        if (changes.uiLang) applyLang(changes.uiLang.newValue);
         if (changes.clips) { data.clips = changes.clips.newValue || []; dirty = true; }
         if (changes.memos) { data.memos = changes.memos.newValue || []; dirty = true; }
       }
@@ -989,6 +997,7 @@
       '  <span class="ttl">' + T('便利クリップメモ・そよぎ', 'Handy Clip Memo - Soyogi') + '</span>',
       '  <span class="hdr-actions">',
       '    <button class="iconbtn" id="btn-search" title="' + T('さがす（いま見ている一覧を文字でしぼりこむ）', 'Search (filter the current list by text)') + '" aria-label="' + T('さがす（いま見ている一覧を文字でしぼりこむ）', 'Search (filter the current list by text)') + '" aria-expanded="false" aria-controls="searchbar">🔍</button>',
+      '    <button class="iconbtn langbtn" id="btn-lang" lang="' + T('en', 'ja') + '" title="' + T('Switch to English', '日本語にする') + '" aria-label="' + T('Switch to English', '日本語にする') + '">' + T('EN', '日本語') + '</button>',
       '    <button class="iconbtn" id="btn-pause" title="' + T('コピーの自動記録を一時停止', 'Pause automatic recording of copies') + '" aria-label="' + T('コピーの自動記録を一時停止', 'Pause automatic recording of copies') + '" aria-pressed="false">⏸</button>',
       '    <button class="iconbtn win" id="btn-window" title="' + T('小窓で開く（ブラウザとは別の小さな窓にする）', 'Open in a small window (separate from the browser)') + '" aria-label="' + T('小窓で開く（ブラウザとは別の小さな窓にする）', 'Open in a small window (separate from the browser)') + '">🪟</button>',
       '    <button class="iconbtn bak" id="btn-export" title="' + T('書き出し（今の中身をファイルに保存）', 'Export (save everything to a file)') + '" aria-label="' + T('書き出し（今の中身をファイルに保存）', 'Export (save everything to a file)') + '">💾</button>',
@@ -1093,6 +1102,7 @@
       if (searchOpen) closeSearch(); else openSearch();
     });
     shadow.getElementById('btn-search-close').addEventListener('click', closeSearch);
+    shadow.getElementById('btn-lang').addEventListener('click', toggleLang);
     searchInputEl.addEventListener('compositionstart', function () { searchComposing = true; });
     searchInputEl.addEventListener('compositionend', function () {
       searchComposing = false;
@@ -1175,17 +1185,67 @@
         });
         ro.observe(panelEl);
       } catch (e) {}
-      window.addEventListener('resize', function () {
-        clearTimeout(resizeClampTimer);
-        resizeClampTimer = setTimeout(clampPanelIntoView, 150);
-      });
-      /* 全画面(top layer)中はz-indexで勝てないため、hostを全画面要素の中へ移す */
-      document.addEventListener('fullscreenchange', function () {
-        try {
-          var target = document.fullscreenElement || document.documentElement;
-          if (host && host.parentNode !== target) target.appendChild(host);
-        } catch (e) {}
-      });
+      /* 言語の切り替えでパネルを作り直しても、窓の見張りは1回だけ付ける */
+      if (!winListenersOn) {
+        winListenersOn = true;
+        window.addEventListener('resize', function () {
+          clearTimeout(resizeClampTimer);
+          resizeClampTimer = setTimeout(clampPanelIntoView, 150);
+        });
+        /* 全画面(top layer)中はz-indexで勝てないため、hostを全画面要素の中へ移す */
+        document.addEventListener('fullscreenchange', function () {
+          try {
+            var target = document.fullscreenElement || document.documentElement;
+            if (host && host.parentNode !== target) target.appendChild(host);
+          } catch (e) {}
+        });
+      }
+    }
+  }
+  var winListenersOn = false;
+
+  /* ---------- 言語の切り替え ---------- */
+  /* 選んだ言語は storage の uiLang に置く(全部のタブ・小窓・次に開いたときに効く) */
+  function toggleLang() {
+    var next = LANG === 'ja' ? 'en' : 'ja';
+    applyLang(next, true);
+    try {
+      var p = chrome.storage.local.set({ uiLang: next });
+      if (p && p.catch) p.catch(function () {});
+    } catch (e) {}
+  }
+
+  /* 画面の文字は作るときに入れているので、パネルを作り直して入れ替える。
+     中身・タブ・並べ替え・検索の文字・位置と大きさ・編集中の下書きはそのまま */
+  function applyLang(next, fromButton) {
+    next = validLang(next) || LANG_AUTO;
+    if (next === LANG) return;
+    LANG = next;
+    SAVE_FAIL_MSG = T('保存できませんでした。ページを再読み込みしてください', 'Could not save. Please reload the page');
+    if (IS_PAGE_MODE) {
+      try { document.title = T('便利クリップメモ・そよぎ', 'Handy Clip Memo - Soyogi'); document.documentElement.setAttribute('lang', LANG); } catch (e) {}
+    }
+    if (!panelEl) return;
+    var keep = {
+      left: panelEl.style.left, top: panelEl.style.top, right: panelEl.style.right,
+      width: panelEl.style.width, height: panelEl.style.height
+    };
+    var wasVisible = visible;
+    clearTimeout(toastTimer);
+    if (toastOnHide) { var f = toastOnHide; toastOnHide = null; try { f(); } catch (e) {} }
+    try { if (host) host.remove(); } catch (e) {}
+    host = shadow = panelEl = null;
+    buildPanel();
+    Object.keys(keep).forEach(function (k) { if (keep[k]) panelEl.style[k] = keep[k]; });
+    if (searchOpen) searchInputEl.value = searchQuery;
+    if (wasVisible) {
+      visible = true;
+      host.style.display = 'block';
+      render();
+      if (fromButton) {
+        try { shadow.getElementById('btn-lang').focus({ preventScroll: true }); } catch (e) {}
+        toast(T('日本語にしました', 'Switched to English'));
+      }
     }
   }
 
