@@ -183,7 +183,7 @@
     '  box-shadow: 0 8px 28px rgba(0,0,0,.28);',
     '  display: flex; flex-direction: column; overflow: hidden; resize: both;',
     '  color: #1b1b1b; font-size: 14px; line-height: 1.55; text-align: left;',
-    /* 付箋の文字の大きさ(小・中・大)。ヘッダーの「Aあ」で切り替える。中が今までの大きさ */
+    /* 付箋の文字の大きさ(小・中・大)。ツールバーの「Aあ」で切り替える。中が今までの大きさ */
     '  --txt-fs: 13px;',
     '}',
     '.panel.fs-s { --txt-fs: 12px; }',
@@ -219,7 +219,8 @@
     '.tab { flex: 1; border: none; background: none; padding: 10px 4px; text-align: center;',
     '  cursor: pointer; font-size: 13px; color: #555; border-bottom: 3px solid transparent; }',
     '.tab.on { border-bottom-color: #23804a; color: #1b6b3d; font-weight: 700; background: #fff; }',
-    '.toolbar { padding: 8px 10px; display: flex; gap: 8px; flex: none; background: #fff;',
+    /* 「ひな形」「Aあ」でボタンが増えたので、入りきらない幅では折り返す(右端が切れて押せなくなるのを防ぐ) */
+    '.toolbar { padding: 8px 10px; display: flex; flex-wrap: wrap; gap: 8px; flex: none; background: #fff;',
     '  align-items: stretch; }',
     '.sortbox { flex: none; max-width: 46%; border: 1px solid #c8d2cc; border-radius: 8px;',
     '  background: #f7faf8; color: #1b6b3d; font-size: 12px; font-weight: 600;',
@@ -628,7 +629,8 @@
   }
 
   /* 🔴 読み上げは端末に入っている声だけを使う(ネットの声は文字を外へ送ることがあるため)。
-     画面の言語に合う、端末の声が見つからなければ読まない。声の一覧が空のときは言語だけ伝える */
+     画面の言語に合う、端末の声が見つからなければ読まない。
+     声の一覧が空のときも、端末の声かどうか確かめられないので読まない(ブラウザ任せにするとネットの声になることがある) */
   function pickVoice(voices) {
     var want = LANG === 'ja' ? 'ja' : 'en';
     var local = voices.filter(function (v) {
@@ -639,7 +641,7 @@
       for (var i = 0; i < local.length; i++) if (local[i].default) return { voice: local[i] };
       return { voice: local[0] };
     }
-    return voices.length ? { none: true } : { voice: null };
+    return { none: true };
   }
 
   function stopSpeaking(silent) {
@@ -810,7 +812,7 @@
     }
 
     var h = el('div', 'tplhead');
-    h.textContent = T('ひな形を押すと、新しいメモとして追加されます。名前も中身も自由に直せます（この端末の中にだけ保存）。',
+    h.textContent = T('「追加」を押すと、ひな形が新しいメモとして入ります。名前も中身も自由に直せます（この端末の中にだけ保存）。',
       'Press Add to put a template in as a new memo. You can edit or delete them (saved only on this device).');
     box.appendChild(h);
     var list2 = getTemplates();
@@ -1509,7 +1511,7 @@
       '  </button>',
       '  <button class="btn sub tplbtn" id="btn-tpl" aria-expanded="false" title="' + T('ひな形から新しいメモを作る（住所・あいさつ文など）', 'Add a memo from a template (address, greeting, etc.)') + '">',
       '    <span class="lbl-full">📝 ' + T('ひな形', 'Templates') + '</span>',
-      '    <span class="lbl-min">📝 ' + T('ひな形', 'Temp.') + '</span>',
+      '    <span class="lbl-min">📝 ' + T('ひな形', 'Templates') + '</span>',
       '  </button>',
       '  <select class="sortbox" id="sortbox" aria-label="' + T('並べ替え', 'Sort') + '" title="' + T('並べ替え（「自分の並び」以外では、ピン止めが一番上に来ます）', 'Sort (pinned items come first, except in My order)') + '"></select>',
       '  <button class="fontbtn" id="btn-font">' + T('Aあ', 'Aa') + '</button>',
