@@ -313,7 +313,128 @@
     return '#1B1B1B';
   }
 
+  /* ---------- 文字の大きさ(小・中・大) ---------- */
+  var FONT_SIZES = [
+    { id: 's', name: '小', en: 'Small' },
+    { id: 'm', name: '中', en: 'Medium' },
+    { id: 'l', name: '大', en: 'Large' }
+  ];
+  function isFontSize(id) {
+    for (var i = 0; i < FONT_SIZES.length; i++) if (FONT_SIZES[i].id === id) return true;
+    return false;
+  }
+  /* 小 → 中 → 大 → 小 の順に切り替える。変な値は「中」から数える */
+  function nextFontSize(id) {
+    var cur = isFontSize(id) ? id : 'm';
+    for (var i = 0; i < FONT_SIZES.length; i++) {
+      if (FONT_SIZES[i].id === cur) return FONT_SIZES[(i + 1) % FONT_SIZES.length].id;
+    }
+    return 'm';
+  }
+
+  /* ---------- バックアップのお知らせ ---------- */
+  var BACKUP_INTERVAL_DAYS = 30;   // 最後の書き出しから、この日数でお知らせ
+  var BACKUP_SNOOZE_DAYS = 7;      // 「あとで」を押したときに待つ日数
+  var DAY_MS = 24 * 60 * 60 * 1000;
+
+  /* お知らせを出すか。info = { lastBackupAt, baselineAt, snoozeUntil, hasData }(数値はミリ秒・無ければ null)
+     ・書き出したことが無いときは baselineAt(使い始めの記録)から数える
+     ・中身(メモやピン止め)が無ければ出さない
+     ・時計が戻っていて基準が未来にあるときは出さない */
+  function backupReminderDue(now, info) {
+    info = info || {};
+    if (!info.hasData) return false;
+    var num = function (v) { return typeof v === 'number' && isFinite(v) ? v : null; };
+    var snooze = num(info.snoozeUntil);
+    if (snooze !== null && now < snooze) return false;
+    var base = num(info.lastBackupAt);
+    if (base === null) base = num(info.baselineAt);
+    if (base === null) return false;
+    return now - base >= BACKUP_INTERVAL_DAYS * DAY_MS;
+  }
+
+  /* 書き出して守る価値のある中身があるか(メモがある・ピン止めがある) */
+  function hasBackupWorthyData(clips, memos) {
+    if (memos && memos.length) return true;
+    return !!(clips && clips.some(function (it) { return it && it.pinned; }));
+  }
+
+  /* ---------- ひな形(メモのひな形) ---------- */
+  var MAX_TEMPLATES = 20;
+  var MAX_TEMPLATE_TITLE = 30;
+
+  /* 最初に用意しているひな形。電話番号などの中身は入れない(自分で書き足す) */
+  function defaultTemplates(lang) {
+    if (lang === 'en') {
+      return [
+        { id: 'tpl-default-1', title: 'Contact point', text: 'Contact point:\nPhone:\nHours:\nNotes:' },
+        { id: 'tpl-default-2', title: 'Greeting', text: 'Hello,\nThis is (name).\nThank you for your help.' },
+        { id: 'tpl-default-3', title: 'Address', text: 'Postal code:\nAddress:\nPhone:' }
+      ];
+    }
+    return [
+      { id: 'tpl-default-1', title: '相談窓口の連絡先', text: '相談窓口：\n電話：\n受付時間：\nメモ：' },
+      { id: 'tpl-default-2', title: 'あいさつ文', text: 'お世話になっております。\n（名前）です。\nよろしくお願いします。' },
+      { id: 'tpl-default-3', title: '住所', text: '〒\n住所：\n電話：' }
+    ];
+  }
+
+  /* 保存された値を安全な形に直す。配列でなければ null(= まだ自分では変えていない)。
+     id が無い・文字が無い項目は捨て、長さの上限と件数の上限を守る */
+  function sanitizeTemplates(arr) {
+    if (!Array.isArray(arr)) return null;
+    var seen = {};
+    var out = [];
+    for (var i = 0; i < arr.length && out.length < MAX_TEMPLATES; i++) {
+      var t = arr[i];
+      if (!t || typeof t !== 'object') continue;
+      var id = typeof t.id === 'string' ? t.id : '';
+      var text = typeof t.text === 'string' ? clampText(t.text) : '';
+      if (!id || seen[id] || !text.trim()) continue;
+      var title = typeof t.title === 'string' ? t.title.trim().slice(0, MAX_TEMPLATE_TITLE) : '';
+      if (!title) title = text.trim().split(/\r?\n/)[0].slice(0, MAX_TEMPLATE_TITLE);
+      seen[id] = true;
+      out.push({ id: id, title: title, text: text });
+    }
+    return out;
+  }
+
+  /* ---------- 読み上げ用に文を区切る ---------- */
+  /* 長い文を一度に読ませると途中で止まる環境があるので、句点・改行で区切って
+     おおよそ maxLen 文字までのかたまりにする。空のかたまりは作らない */
+  function speakChunks(text, maxLen) {
+    maxLen = maxLen > 20 ? maxLen : 160;
+    var s = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
+    var parts = s.match(/[^。．.！!？?\n]+[。．.！!？?]*\n*|\n+/g) || [];
+    var out = [];
+    var cur = '';
+    var push = function () { if (cur.trim()) out.push(cur.trim()); cur = ''; };
+    parts.forEach(function (p) {
+      while (p.length > maxLen) {          // 句読点なしで長く続くときは固定の長さで切る
+        if (cur) push();
+        out.push(p.slice(0, maxLen).trim());
+        p = p.slice(maxLen);
+      }
+      if (cur.length + p.length > maxLen) push();
+      cur += p;
+    });
+    push();
+    return out.filter(function (c) { return c; });
+  }
+
   var api = {
+    FONT_SIZES: FONT_SIZES,
+    isFontSize: isFontSize,
+    nextFontSize: nextFontSize,
+    BACKUP_INTERVAL_DAYS: BACKUP_INTERVAL_DAYS,
+    BACKUP_SNOOZE_DAYS: BACKUP_SNOOZE_DAYS,
+    backupReminderDue: backupReminderDue,
+    hasBackupWorthyData: hasBackupWorthyData,
+    MAX_TEMPLATES: MAX_TEMPLATES,
+    MAX_TEMPLATE_TITLE: MAX_TEMPLATE_TITLE,
+    defaultTemplates: defaultTemplates,
+    sanitizeTemplates: sanitizeTemplates,
+    speakChunks: speakChunks,
     MAX_ITEMS: MAX_ITEMS,
     MAX_TEXT: MAX_TEXT,
     COLORS: COLORS,

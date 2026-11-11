@@ -62,6 +62,27 @@
   var saveStateTimer = null;
   var resizeClampTimer = null;
 
+  /* 文字の大きさ(s=小・m=中・l=大)。storage の fontSize に置く */
+  var fontSize = 'm';
+  var btnFontEl = null, btnTplEl = null;
+  /* お知らせの帯 */
+  var noticeBackupEl = null, noticeA2hsEl = null;
+  var backupInfo = { lastBackupAt: null, baselineAt: null, snoozeUntil: null };
+  var a2hsSeen = false;               // ホーム画面への追加のご案内を「わかった」で閉じたか(Web版だけ)
+  /* ひな形。null=まだ自分では変えていない(最初のひな形をそのまま見せる) */
+  var templates = null;
+  var templatesOpen = false;
+  var tplEdit = null;                 // 編集中のひな形 {id(新規はnull), title, text}。状態駆動で描く
+  var tplSaving = false;
+  var tplFocusPending = false;
+  var tplConfirmId = null;            // 「削除する」に切り替えたひな形
+  var tplConfirmAt = 0;
+  var tplConfirmTimer = null;
+  var TPL_KEY = '__templates__';      // ひな形の箱のフォーカス目印
+  /* 読み上げ */
+  var speakingId = null;              // いま読み上げている項目の id
+  var speakGen = 0;                   // 読み上げを始めるたびに増やす(古い読み上げの終わりの知らせを捨てる)
+
   /* 画面の言葉。ヘッダーの言語ボタンで選んだもの(storage の uiLang)を優先し、
      選んでいなければブラウザの言語が日本語なら日本語、それ以外は英語 */
   var LANG_AUTO = (function () {
@@ -97,6 +118,57 @@
         縮めても再表示で元に戻る不具合になる) */
   var MIN_W = 100, MIN_H = 170;
 
+  /* 幅が狭いときの詰め方(@container の段階ごと)。末尾の tierCss() が @container にして並べる */
+  var TIER_330 = [
+    '  .lbl-full { display: none; }',
+    '  .lbl-min { display: inline; }',
+    '  .toolbar { padding: 6px 7px; gap: 6px; }',
+    '  .btn { padding: 8px 6px; font-size: 12px; }',
+    '  .sortbox { font-size: 11px; }',
+    '  .hdr { padding: 7px 8px; gap: 5px; }',
+    '  .tab { padding: 8px 2px; font-size: 12px; }',
+    '  .list { padding: 6px 7px 10px; gap: 6px; }',
+    '  .card { padding: 7px 8px; }',
+    '  .meta .time { font-size: 10px; }',
+    '  .iconbtn { width: 26px; height: 25px; font-size: 13px; }',
+  ];
+
+  var TIER_240 = [
+    '  .hdr .ttl { display: none; }',
+    /* ヘッダーのボタンが6つになったので、ロゴを隠して詰める。🔴 それでも入らない幅では
+       折り返す(右端の「しまう」が切れて押せなくなるのを防ぐ)。24pxは押しやすさの下限 */
+    '  .logo { display: none; }',
+    '  .hdr-actions { gap: 3px; flex-wrap: wrap; justify-content: flex-end; }',
+    '  .hdr .iconbtn { width: 24px; }',
+    '  .meta { flex-wrap: wrap; }',
+    '  .meta .time { flex: 1 0 100%; margin-bottom: 3px; }',
+  ];
+
+  var TIER_165 = [
+    '  .toolbar { flex-direction: column; gap: 4px; padding: 5px 5px; }',
+    '  .btn { width: 100%; padding: 7px 4px; font-size: 11px; }',
+    '  .sortbox { max-width: none; width: 100%; font-size: 11px; padding: 3px 2px; }',
+    '  .tab { font-size: 11px; padding: 7px 1px; }',
+    '  .hdr { padding: 5px 6px; }',
+    '  .list { padding: 5px 5px 8px; gap: 5px; }',
+    '  .card { padding: 6px 6px; }',
+    '  .card .txt { font-size: calc(var(--txt-fs, 13px) - 1px); }',
+    '  .card .txt.clamp { -webkit-line-clamp: 3; }',
+    /* 22pxなら100px幅でも3つ並ぶ(24pxだと2つで折り返して3段になる) */
+    '  .meta { gap: 2px; justify-content: flex-end; margin-top: 5px; }',
+    '  .iconbtn { width: 22px; height: 21px; font-size: 11px; }',
+    '  .toast { padding: 5px 8px; font-size: 11px; bottom: 8px; }',
+    '  .toast-act { margin: 4px 0 0; }',
+    /* この幅でバックアップや窓の切り替えはしないので隠す(広げれば出る)。
+       ロゴも隠して、検索・一時停止・しまうの3つを1列に収める */
+    '  .bak, .win, .logo, .langbtn, .fontbtn { display: none; }',
+    '  .pausebar, .searchbar, .notice { padding: 5px 5px; font-size: 11px; }',
+    '  .searchbar .count { font-size: 11px; }',
+  ];
+
+  /* 文字「大」のときだけ、同じ詰め方を広い幅から始めるための接頭辞 */
+  var FS_L = '.panel.fs-l ';
+
   var CSS = [
     '* { box-sizing: border-box; margin: 0; padding: 0;',
     '    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif; }',
@@ -111,7 +183,11 @@
     '  box-shadow: 0 8px 28px rgba(0,0,0,.28);',
     '  display: flex; flex-direction: column; overflow: hidden; resize: both;',
     '  color: #1b1b1b; font-size: 14px; line-height: 1.55; text-align: left;',
+    /* 付箋の文字の大きさ(小・中・大)。ヘッダーの「Aあ」で切り替える。中が今までの大きさ */
+    '  --txt-fs: 13px;',
     '}',
+    '.panel.fs-s { --txt-fs: 12px; }',
+    '.panel.fs-l { --txt-fs: 18px; }',
     /* アイコンで開いたときにフォーカスを置く先。枠は出さない(中のボタンには下で枠を出す) */
     '.panel:focus { outline: none; }',
     /* 100vh だとSafariでツールバーが出ている間に下が隠れるので 100dvh で上書きする
@@ -149,6 +225,11 @@
     '  background: #f7faf8; color: #1b6b3d; font-size: 12px; font-weight: 600;',
     '  padding: 0 4px; cursor: pointer; }',
     '.lbl-min { display: none; }',
+    /* 文字の大きさの切り替えと、ひな形のボタン(ツールバー) */
+    '.fontbtn { flex: none; border: 1px solid #c8d2cc; border-radius: 8px; background: #f7faf8;',
+    '  color: #1b6b3d; font-size: 12px; font-weight: 700; padding: 0 8px; cursor: pointer; min-width: 34px; }',
+    '.fontbtn:hover { background: #e3efe7; }',
+    '.btn.tplbtn { flex: none; }',
     '.btn { flex: 1; border: none; background: #23804a; color: #fff; font-size: 13px;',
     '  font-weight: 600; padding: 9px 10px; border-radius: 8px; cursor: pointer; }',
     '.btn:hover { background: #1d6f40; }',
@@ -160,11 +241,11 @@
     '.card { border-radius: 10px; border: 1px solid rgba(0,0,0,.14); padding: 9px 10px;',
     '  box-shadow: 0 1px 3px rgba(0,0,0,.12); flex: none; }',
     '.card .txt { white-space: pre-wrap; word-break: break-word; cursor: pointer;',
-    '  font-size: 13px; }',
+    '  font-size: var(--txt-fs, 13px); }',
     '.card .txt.clamp { display: -webkit-box; -webkit-line-clamp: 4;',
     '  -webkit-box-orient: vertical; overflow: hidden; }',
     '.card textarea { width: 100%; min-height: 76px; border: 1px solid rgba(0,0,0,.3);',
-    '  border-radius: 6px; padding: 7px; font-size: 13px; line-height: 1.5;',
+    '  border-radius: 6px; padding: 7px; font-size: var(--txt-fs, 13px); line-height: 1.5;',
     '  background: rgba(255,255,255,.92); color: #1b1b1b; resize: vertical; }',
     '.meta { display: flex; align-items: center; gap: 3px; margin-top: 7px; }',
     /* 時刻は付箋の色の上に重なる。いちばん暗い紫・ピンクの上でも 4.5:1 を超える濃さ */
@@ -225,6 +306,33 @@
     '.searchbar input { flex: 1 1 90px; min-width: 0; border: 1px solid #7d8f83; border-radius: 8px;',
     '  padding: 6px 8px; font-size: 13px; color: #1b1b1b; background: #ffffff; }',
     '.searchbar .count { font-size: 12px; color: #3d4a42; }',
+    /* お知らせの帯(書き出しのお願い・ホーム画面への追加のご案内)。色だけに頼らず文字で伝える。
+       文字と背景は 10:1 以上、ボタンの枠は背景との差 3:1 以上 */
+    '.notice { display: none; align-items: center; gap: 6px 8px; flex-wrap: wrap; flex: none;',
+    '  padding: 7px 10px; background: #e8f2fb; color: #12365a; border-bottom: 1px solid #a9c6e3;',
+    '  font-size: 12px; line-height: 1.5; }',
+    '.notice.on { display: flex; }',
+    '.notice-txt { flex: 1 1 140px; min-width: 0; white-space: pre-line; }',
+    '.notice-btns { display: flex; gap: 6px; flex-wrap: wrap; flex: none; }',
+    '.notice-btn { flex: none; border: 1px solid #1d4f82; background: #ffffff; color: #12365a;',
+    '  border-radius: 8px; padding: 3px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }',
+    '.notice-btn:hover { background: #dbe9f6; }',
+    /* ひな形の箱(メモのタブの先頭に出る) */
+    '.tplbox { flex: none; border: 1px solid #a9c9b5; border-radius: 10px; background: #ffffff;',
+    '  padding: 8px 9px; }',
+    '.tplhead { font-size: 12px; font-weight: 700; color: #1b6b3d; margin-bottom: 4px; line-height: 1.5; }',
+    '.tplrow { display: flex; align-items: center; gap: 4px; padding: 5px 0; border-top: 1px dashed #c3d6ca; }',
+    '.tplrow .tpltitle { flex: 1 1 auto; min-width: 0; font-size: 13px; color: #1b1b1b;',
+    '  overflow-wrap: anywhere; line-height: 1.4; }',
+    '.tplrow .iconbtn { background: #e3efe7; }',
+    '.tplrow .iconbtn:hover { background: #d2e5d9; }',
+    '.tplrow .iconbtn.danger { background: #c9302c; }',
+    '.tplfoot { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap;',
+    '  margin-top: 6px; padding-top: 6px; border-top: 1px dashed #c3d6ca; }',
+    '.tplbox input[type=text], .tplbox textarea { width: 100%; border: 1px solid #7d8f83;',
+    '  border-radius: 6px; padding: 6px 7px; font-size: 13px; line-height: 1.5; color: #1b1b1b;',
+    '  background: #ffffff; margin-top: 5px; }',
+    '.tplbox textarea { min-height: 84px; resize: vertical; }',
     /* キーボードで動かしたときの目印。付箋のどの色の上でも見えるよう白と濃い青の二重の輪にする
        (外側に出すと端のタブがパネルの縁で切れるので、タブだけ内側に描く) */
     'button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible {',
@@ -232,53 +340,30 @@
     '.tab:focus-visible { box-shadow: inset 0 0 0 3px #174ea6; }',
 
     /* 🔴 @container は詳細度を上げないので、上書きしたい通常ルールより「後ろ」に
-          置かないと効かない。必ずCSSの最後に置くこと(前に置くと半分死ぬ) */
-    '@container (max-width: 330px) {',
-    '  .lbl-full { display: none; }',
-    '  .lbl-min { display: inline; }',
-    '  .toolbar { padding: 6px 7px; gap: 6px; }',
-    '  .btn { padding: 8px 6px; font-size: 12px; }',
-    '  .sortbox { font-size: 11px; }',
-    '  .hdr { padding: 7px 8px; gap: 5px; }',
-    '  .tab { padding: 8px 2px; font-size: 12px; }',
-    '  .list { padding: 6px 7px 10px; gap: 6px; }',
-    '  .card { padding: 7px 8px; }',
-    '  .meta .time { font-size: 10px; }',
-    '  .iconbtn { width: 26px; height: 25px; font-size: 13px; }',
-    '}',
-    '@container (max-width: 240px) {',
-    '  .hdr .ttl { display: none; }',
-    /* ヘッダーのボタンが6つになったので、ロゴを隠して詰める。🔴 それでも入らない幅では
-       折り返す(右端の「しまう」が切れて押せなくなるのを防ぐ)。24pxは押しやすさの下限 */
-    '  .logo { display: none; }',
-    '  .hdr-actions { gap: 3px; flex-wrap: wrap; justify-content: flex-end; }',
-    '  .hdr .iconbtn { width: 24px; }',
-    '  .meta { flex-wrap: wrap; }',
-    '  .meta .time { flex: 1 0 100%; margin-bottom: 3px; }',
-    '}',
-    /* 極細(半分幅)。ボタンが横に並ばないので縦積みにし、操作アイコンは折り返す */
-    '@container (max-width: 165px) {',
-    '  .toolbar { flex-direction: column; gap: 4px; padding: 5px 5px; }',
-    '  .btn { width: 100%; padding: 7px 4px; font-size: 11px; }',
-    '  .sortbox { max-width: none; width: 100%; font-size: 11px; padding: 3px 2px; }',
-    '  .tab { font-size: 11px; padding: 7px 1px; }',
-    '  .hdr { padding: 5px 6px; }',
-    '  .list { padding: 5px 5px 8px; gap: 5px; }',
-    '  .card { padding: 6px 6px; }',
-    '  .card .txt { font-size: 12px; }',
-    '  .card .txt.clamp { -webkit-line-clamp: 3; }',
-    /* 22pxなら100px幅でも3つ並ぶ(24pxだと2つで折り返して3段になる) */
-    '  .meta { gap: 2px; justify-content: flex-end; margin-top: 5px; }',
-    '  .iconbtn { width: 22px; height: 21px; font-size: 11px; }',
-    '  .toast { padding: 5px 8px; font-size: 11px; bottom: 8px; }',
-    '  .toast-act { margin: 4px 0 0; }',
-    /* この幅でバックアップや窓の切り替えはしないので隠す(広げれば出る)。
-       ロゴも隠して、検索・一時停止・しまうの3つを1列に収める */
-    '  .bak, .win, .logo, .langbtn { display: none; }',
-    '  .pausebar, .searchbar { padding: 5px 5px; font-size: 11px; }',
-    '  .searchbar .count { font-size: 11px; }',
-    '}'
-  ].join('\n');
+          置かないと効かない。必ずCSSの最後に置くこと(前に置くと半分死ぬ)。
+          段階ごとの詰め方は上の TIER_330 / TIER_240 / TIER_165 にまとめてあり、
+          ここで @container にして並べる。文字を「大」にしたときは同じ詰め方を
+          広い幅(400 / 300 / 200)から先に始める(.panel.fs-l を付けた同じ規則を、通常の後ろに置く) */
+  ].concat(
+    tierCss(330, TIER_330, ''),
+    tierCss(240, TIER_240, ''),
+    tierCss(165, TIER_165, ''),
+    tierCss(400, TIER_330, FS_L),
+    tierCss(300, TIER_240, FS_L),
+    tierCss(200, TIER_165, FS_L)
+  ).join('\n');
+
+  /* 「セレクタ { 中身 }」の1規則の、すべてのセレクタに接頭辞を付ける */
+  function scopeRule(rule, prefix) {
+    if (!prefix) return rule;
+    var i = rule.indexOf('{');
+    var sels = rule.slice(0, i).split(',').map(function (x) { return prefix + x.trim(); }).join(', ');
+    return '  ' + sels + ' ' + rule.slice(i);
+  }
+  function tierCss(px, rules, prefix) {
+    return ['@container (max-width: ' + px + 'px) {']
+      .concat(rules.map(function (r) { return scopeRule(r, prefix); }), ['}']);
+  }
 
   /* ---------- 小道具 ---------- */
   function el(tag, cls) {
@@ -411,6 +496,372 @@
         if (visible) scheduleRender();
       });
     } catch (e) {}
+  }
+
+  /* ---------- 設定の保存(storage.local に直接置く。言語・文字の大きさ・お知らせの記録) ---------- */
+
+  /* 保存できたら resolve、できなければ画面に出す文言で reject */
+  function saveLocal(obj) {
+    return new Promise(function (resolve, reject) {
+      if (!extAlive()) { reject(SAVE_FAIL_MSG); return; }
+      var p;
+      try { p = chrome.storage.local.set(obj); } catch (e) { reject(SAVE_FAIL_MSG); return; }
+      if (p && p.then) p.then(function () { resolve(); }, function () { reject(SAVE_FAIL_MSG); });
+      else resolve();
+    });
+  }
+
+  /* 保存できなくても使い続けられるもの(お知らせの記録など)は、知らせずに流す */
+  function saveLocalQuiet(obj) {
+    saveLocal(obj).then(null, function () {});
+  }
+
+  function numOrNull(v) { return typeof v === 'number' && isFinite(v) ? v : null; }
+
+  /* ---------- 文字の大きさ ---------- */
+
+  function fontName() {
+    for (var i = 0; i < L.FONT_SIZES.length; i++) if (L.FONT_SIZES[i].id === fontSize) return nm(L.FONT_SIZES[i]);
+    return '';
+  }
+
+  /* 見た目は panel のクラス(fs-s / fs-l)で切り替える。パネルを作り直さずに済む */
+  function applyFontSize(id) {
+    fontSize = L.isFontSize(id) ? id : 'm';
+    if (!panelEl) return;
+    panelEl.classList.remove('fs-s', 'fs-l');
+    if (fontSize === 's') panelEl.classList.add('fs-s');
+    if (fontSize === 'l') panelEl.classList.add('fs-l');
+    if (btnFontEl) {
+      var t = T('文字の大きさ（いま: ' + fontName() + '。押すと変わります）',
+        'Text size (now: ' + fontName() + '. Press to change)');
+      btnFontEl.title = t;
+      btnFontEl.setAttribute('aria-label', t);
+    }
+  }
+
+  function cycleFontSize() {
+    var next = L.nextFontSize(fontSize);
+    applyFontSize(next);
+    toast(T('文字の大きさ: ', 'Text size: ') + fontName());
+    saveLocal({ fontSize: next }).then(null, toast);
+  }
+
+  /* ---------- お知らせの帯(書き出しのお願い・ホーム画面への追加) ---------- */
+
+  /* 書き出しのお願いを出すか。最後の書き出し(無ければ使い始め)から30日たち、
+     書き出す価値のある中身(メモ・ピン止め)があり、「あとで」の期間でないとき */
+  function backupDue() {
+    return L.backupReminderDue(Date.now(), {
+      lastBackupAt: backupInfo.lastBackupAt,
+      baselineAt: backupInfo.baselineAt,
+      snoozeUntil: backupInfo.snoozeUntil,
+      hasData: L.hasBackupWorthyData(data.clips, data.memos)
+    });
+  }
+
+  function snoozeBackup() {
+    var until = Date.now() + L.BACKUP_SNOOZE_DAYS * 24 * 60 * 60 * 1000;
+    backupInfo.snoozeUntil = until;
+    saveLocalQuiet({ backupSnoozeUntil: until });
+    render();
+    try { btnSearchEl.focus(); } catch (e) {}
+  }
+
+  /* 書き出せたら、数え直す(次のお知らせは30日後) */
+  function markBackedUp() {
+    var now = Date.now();
+    backupInfo.lastBackupAt = now;
+    backupInfo.snoozeUntil = null;
+    saveLocalQuiet({ lastBackupAt: now, backupSnoozeUntil: null });
+    if (visible) render();
+  }
+
+  /* iPhone・iPad のブラウザで開いていて、まだホーム画面から開いていないか */
+  function needsA2hsGuide() {
+    try {
+      var ua = String(navigator.userAgent || '');
+      var ios = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (!ios) return false;
+      if (navigator.standalone === true) return false;
+      if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return false;
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function dismissA2hs() {
+    a2hsSeen = true;
+    saveLocalQuiet({ a2hsSeen: true });
+    render();
+    try { btnSearchEl.focus(); } catch (e) {}
+  }
+
+  function renderNotices() {
+    if (!noticeBackupEl) return;
+    noticeBackupEl.classList.toggle('on', backupDue());
+    noticeA2hsEl.classList.toggle('on', IS_WEB_APP && !a2hsSeen && needsA2hsGuide());
+  }
+
+  /* ---------- 読み上げ(声で読む) ---------- */
+
+  function ttsSupported() {
+    try { return !!(window.speechSynthesis && typeof window.SpeechSynthesisUtterance === 'function'); } catch (e) { return false; }
+  }
+
+  /* 声の一覧は、ブラウザによって最初は空で、あとから届く。少しだけ待つ */
+  function getVoicesReady(cb) {
+    var ss = window.speechSynthesis;
+    var list = [];
+    try { list = ss.getVoices() || []; } catch (e) { list = []; }
+    if (list.length) { cb(list); return; }
+    var done = false;
+    var finish = function () {
+      if (done) return;
+      done = true;
+      try { ss.removeEventListener('voiceschanged', finish); } catch (e) {}
+      var v = [];
+      try { v = ss.getVoices() || []; } catch (e2) { v = []; }
+      cb(v);
+    };
+    try { ss.addEventListener('voiceschanged', finish); } catch (e3) {}
+    setTimeout(finish, 700);
+  }
+
+  /* 🔴 読み上げは端末に入っている声だけを使う(ネットの声は文字を外へ送ることがあるため)。
+     画面の言語に合う、端末の声が見つからなければ読まない。声の一覧が空のときは言語だけ伝える */
+  function pickVoice(voices) {
+    var want = LANG === 'ja' ? 'ja' : 'en';
+    var local = voices.filter(function (v) {
+      var lang = String(v.lang || '').toLowerCase().replace('_', '-').split('-')[0];
+      return lang === want && v.localService !== false;
+    });
+    if (local.length) {
+      for (var i = 0; i < local.length; i++) if (local[i].default) return { voice: local[i] };
+      return { voice: local[0] };
+    }
+    return voices.length ? { none: true } : { voice: null };
+  }
+
+  function stopSpeaking(silent) {
+    speakGen++;
+    var was = speakingId;
+    speakingId = null;
+    try { if (ttsSupported()) window.speechSynthesis.cancel(); } catch (e) {}
+    if (!silent && was !== null && visible) render();
+  }
+
+  /* もう一度押すと止まる。読み終わったら、ボタンを元に戻す */
+  function toggleSpeak(item) {
+    if (!ttsSupported()) return;
+    if (speakingId === item.id) { stopSpeaking(); return; }
+    var text = String(item.text || '');
+    if (!text.trim()) { toast(T('読み上げる文字がありません', 'There is no text to read')); return; }
+    stopSpeaking(true);
+    var gen = speakGen;
+    speakingId = item.id;
+    render();
+    getVoicesReady(function (voices) {
+      if (gen !== speakGen) return;
+      var pick = pickVoice(voices);
+      var fail = function (msg) {
+        speakingId = null;
+        if (visible) render();
+        toast(msg);
+      };
+      if (pick.none) {
+        fail(T('この端末には、日本語の読み上げの声が入っていません', 'This device has no English voice for reading aloud'));
+        return;
+      }
+      var chunks = L.speakChunks(text);
+      var ss = window.speechSynthesis;
+      var finish = function () {
+        if (gen !== speakGen) return;
+        speakingId = null;
+        if (visible) scheduleRender();
+      };
+      try {
+        chunks.forEach(function (c, i) {
+          var u = new window.SpeechSynthesisUtterance(c);
+          u.lang = pick.voice && pick.voice.lang ? pick.voice.lang : (LANG === 'ja' ? 'ja-JP' : 'en-US');
+          if (pick.voice) u.voice = pick.voice;
+          if (i === chunks.length - 1) u.onend = finish;
+          u.onerror = function (e) {
+            /* 自分で止めたときの知らせ(canceled / interrupted)は、止めた側が片づけている */
+            var er = e && e.error;
+            if (er === 'canceled' || er === 'interrupted') return;
+            if (gen === speakGen) fail(T('読み上げできませんでした', 'Could not read aloud'));
+          };
+          ss.speak(u);
+        });
+      } catch (e2) {
+        fail(T('読み上げできませんでした', 'Could not read aloud'));
+      }
+    });
+  }
+
+  /* ---------- ひな形(メモのひな形) ---------- */
+
+  function getTemplates() { return templates || L.defaultTemplates(LANG); }
+
+  function tplNewId() {
+    return 'tpl-' + Date.now() + '-' + Math.floor(Math.random() * 100000);
+  }
+
+  function closeTemplates() {
+    templatesOpen = false;
+    tplEdit = null;
+    tplConfirmId = null;
+    clearTimeout(tplConfirmTimer);
+  }
+
+  function toggleTemplates() {
+    if (templatesOpen) closeTemplates();
+    else templatesOpen = true;
+    render();
+    if (!templatesOpen) { try { btnTplEl.focus(); } catch (e) {} }
+  }
+
+  function startTplEdit(t) {
+    if (!t && getTemplates().length >= L.MAX_TEMPLATES) {
+      toast(T('ひな形は' + L.MAX_TEMPLATES + '個までです。いらないものを消してください', 'You can keep up to ' + L.MAX_TEMPLATES + ' templates. Please delete one you do not need'));
+      return;
+    }
+    tplEdit = { id: t ? t.id : null, title: t ? t.title : '', text: t ? t.text : '' };
+    tplFocusPending = true;
+    tplConfirmId = null;
+    render();
+  }
+
+  /* 全部を1回で保存する。🔴 保存できてから画面の状態を変える(失敗したら下書きを残す) */
+  function saveTemplates(list) {
+    var clean = L.sanitizeTemplates(list) || [];
+    return saveLocal({ templates: clean }).then(function () { templates = clean; });
+  }
+
+  function addTemplateAsMemo(t) {
+    saveOp({ op: 'addMemo', text: t.text }).then(function () {
+      closeTemplates();
+      render();
+      try { btnTplEl.focus(); } catch (e) {}
+      toast(T('メモに追加しました。✏️で書き足せます', 'Added as a memo. Use ✏️ to fill it in'));
+    }, toast);
+  }
+
+  function buildTemplateBox() {
+    var box = el('div', 'tplbox');
+    box.dataset.fkey = TPL_KEY;
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', T('ひな形', 'Templates'));
+
+    if (tplEdit) {
+      var head = el('div', 'tplhead');
+      head.textContent = tplEdit.id ? T('ひな形を直す', 'Edit template') : T('ひな形を作る', 'New template');
+      box.appendChild(head);
+      var ti = document.createElement('input');
+      ti.type = 'text';
+      ti.maxLength = L.MAX_TEMPLATE_TITLE;
+      ti.value = tplEdit.title;
+      ti.placeholder = T('名前（例: 住所）', 'Name (e.g. Address)');
+      ti.setAttribute('aria-label', T('ひな形の名前', 'Template name'));
+      ti.dataset.act = 'tpl-title';
+      ti.addEventListener('input', function () { if (tplEdit) tplEdit.title = ti.value; });
+      var ta = document.createElement('textarea');
+      ta.maxLength = L.MAX_TEXT;
+      ta.value = tplEdit.text;
+      ta.placeholder = T('追加されるメモの文', 'Text of the memo to add');
+      ta.setAttribute('aria-label', T('ひな形の文', 'Template text'));
+      ta.dataset.act = 'tpl-text';
+      ta.addEventListener('input', function () { if (tplEdit) tplEdit.text = ta.value; });
+      box.appendChild(ti);
+      box.appendChild(ta);
+      var row = el('div', 'tplfoot');
+      row.appendChild(textBtn(T('キャンセル', 'Cancel'), function () {
+        tplEdit = null;
+        render();
+      }, 'sub', 'tpl-cancel'));
+      row.appendChild(textBtn(T('保存', 'Save'), function () {
+        if (tplSaving || !tplEdit) return;
+        tplEdit.title = ti.value;
+        tplEdit.text = ta.value;
+        if (!ta.value.trim()) { toast(T('文字を入力してください', 'Please enter some text')); return; }
+        var id = tplEdit.id;
+        var entry = { id: id || tplNewId(), title: ti.value, text: ta.value };
+        var list = getTemplates();
+        var next = id
+          ? list.map(function (x) { return x.id === id ? entry : x; })
+          : list.concat([entry]);
+        tplSaving = true;
+        saveTemplates(next).then(function () {
+          tplSaving = false;
+          tplEdit = null;
+          render();
+          toast(T('ひな形を保存しました', 'Template saved'));
+        }, function (msg) {
+          tplSaving = false;
+          toast(msg);
+        });
+      }, '', 'tpl-save'));
+      box.appendChild(row);
+      if (tplFocusPending) {
+        tplFocusPending = false;
+        setTimeout(function () { try { ti.focus(); } catch (e) {} }, 0);
+      }
+      return box;
+    }
+
+    var h = el('div', 'tplhead');
+    h.textContent = T('ひな形を押すと、新しいメモとして追加されます。名前も中身も自由に直せます（この端末の中にだけ保存）。',
+      'Press Add to put a template in as a new memo. You can edit or delete them (saved only on this device).');
+    box.appendChild(h);
+    var list2 = getTemplates();
+    if (!list2.length) {
+      var em = el('div', 'tplhead');
+      em.textContent = T('ひな形がありません。「＋ ひな形を作る」で作れます。', 'There are no templates. Use "+ New template" to make one.');
+      box.appendChild(em);
+    }
+    list2.forEach(function (t) {
+      var r = el('div', 'tplrow');
+      r.dataset.tid = t.id;
+      var title = el('span', 'tpltitle');
+      title.textContent = t.title;
+      r.appendChild(title);
+      var add = textBtn(T('追加', 'Add'), function () { addTemplateAsMemo(t); }, '', 'tpl-add-' + t.id);
+      add.setAttribute('aria-label', T('「' + t.title + '」をメモに追加', 'Add "' + t.title + '" as a memo'));
+      r.appendChild(add);
+      r.appendChild(iconBtn('✏️', T('「' + t.title + '」を直す', 'Edit "' + t.title + '"'), function () { startTplEdit(t); }, false, 'tpl-edit-' + t.id));
+      var del;
+      if (tplConfirmId === t.id) {
+        del = el('button', 'iconbtn danger');
+        del.textContent = T('削除する', 'Confirm delete');
+        del.dataset.act = 'tpl-del-' + t.id;
+        del.addEventListener('click', function () {
+          if (Date.now() - tplConfirmAt < CONFIRM_GUARD_MS) return;
+          tplConfirmId = null;
+          clearTimeout(tplConfirmTimer);
+          saveTemplates(getTemplates().filter(function (x) { return x.id !== t.id; })).then(function () {
+            render();
+            toast(T('ひな形を削除しました', 'Template deleted'));
+          }, toast);
+        });
+      } else {
+        del = iconBtn('🗑️', T('「' + t.title + '」を削除', 'Delete "' + t.title + '"'), function () {
+          tplConfirmId = t.id;
+          tplConfirmAt = Date.now();
+          clearTimeout(tplConfirmTimer);
+          tplConfirmTimer = setTimeout(function () {
+            if (tplConfirmId === t.id) { tplConfirmId = null; if (visible) scheduleRender(); }
+          }, CONFIRM_RESET_MS);
+          render();
+        }, false, 'tpl-del-' + t.id);
+      }
+      r.appendChild(del);
+      box.appendChild(r);
+    });
+    var foot = el('div', 'tplfoot');
+    foot.appendChild(textBtn(T('＋ ひな形を作る', '+ New template'), function () { startTplEdit(null); }, 'sub', 'tpl-new'));
+    foot.appendChild(textBtn(T('閉じる', 'Close'), toggleTemplates, 'sub', 'tpl-close'));
+    box.appendChild(foot);
+    return box;
   }
 
   /* ---------- コピー/カットの自動記録 ---------- */
@@ -738,6 +1189,7 @@
     var latest = null;
     for (var i = 0; i < list.length; i++) if (list[i].id === item.id) latest = list[i];
     var snapshot = Object.assign({}, latest || item);
+    if (speakingId === item.id) stopSpeaking(true);
     saveOp({ op: 'remove', kind: kind, id: item.id }).then(function () {
       var u = { kind: kind, item: snapshot };
       toast(T('削除しました', 'Deleted'), {
@@ -791,6 +1243,7 @@
       a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
       toast(T('書き出しました', 'Exported'));
+      markBackedUp();
     } catch (e) {
       toast(T('書き出せませんでした', 'Could not export'));
     }
@@ -840,8 +1293,20 @@
   /* ---------- データ読み込み・監視 ---------- */
   function loadData(cb) {
     try {
-      chrome.storage.local.get({ clips: [], memos: [], panelState: null, recordingPaused: false, uiLang: null }, function (res) {
+      chrome.storage.local.get({ clips: [], memos: [], panelState: null, recordingPaused: false, uiLang: null,
+        fontSize: 'm', lastBackupAt: null, backupBaselineAt: null, backupSnoozeUntil: null, a2hsSeen: false, templates: null }, function (res) {
         if (validLang(res.uiLang)) applyLang(res.uiLang);
+        applyFontSize(res.fontSize);
+        backupInfo.lastBackupAt = numOrNull(res.lastBackupAt);
+        backupInfo.baselineAt = numOrNull(res.backupBaselineAt);
+        backupInfo.snoozeUntil = numOrNull(res.backupSnoozeUntil);
+        /* 使い始めの日を一度だけ覚える(書き出したことが無い人の「30日」はここから数える) */
+        if (backupInfo.lastBackupAt === null && backupInfo.baselineAt === null) {
+          backupInfo.baselineAt = Date.now();
+          saveLocalQuiet({ backupBaselineAt: backupInfo.baselineAt });
+        }
+        a2hsSeen = res.a2hsSeen === true;
+        templates = L.sanitizeTemplates(res.templates);
         data.clips = res.clips || [];
         data.memos = res.memos || [];
         if (!IS_WEB_APP) recordingPaused = !!res.recordingPaused;
@@ -870,6 +1335,12 @@
       if (IS_TOP) {
         /* 別のタブや小窓で言語を切り替えたら、こちらも合わせる */
         if (changes.uiLang) applyLang(changes.uiLang.newValue);
+        if (changes.fontSize) applyFontSize(changes.fontSize.newValue);
+        if (changes.lastBackupAt) { backupInfo.lastBackupAt = numOrNull(changes.lastBackupAt.newValue); dirty = true; }
+        if (changes.backupBaselineAt) { backupInfo.baselineAt = numOrNull(changes.backupBaselineAt.newValue); dirty = true; }
+        if (changes.backupSnoozeUntil) { backupInfo.snoozeUntil = numOrNull(changes.backupSnoozeUntil.newValue); dirty = true; }
+        if (changes.a2hsSeen) { a2hsSeen = changes.a2hsSeen.newValue === true; dirty = true; }
+        if (changes.templates) { templates = L.sanitizeTemplates(changes.templates.newValue); dirty = true; }
         if (changes.clips) { data.clips = changes.clips.newValue || []; dirty = true; }
         if (changes.memos) { data.memos = changes.memos.newValue || []; dirty = true; }
       }
@@ -878,7 +1349,7 @@
   } catch (e) {}
 
   function scheduleRender() {
-    if (editingId || composerOpen || reorderDragging) { pendingRender = true; return; }
+    if (editingId || composerOpen || reorderDragging || tplEdit) { pendingRender = true; return; }
     render();
   }
 
@@ -1009,6 +1480,19 @@
       '  <span class="pausebar-txt">⏸ ' + T('記録を止めています（ページでコピーしても残りません）', 'Recording is paused (copies on pages are not saved)') + '</span>',
       '  <button class="pausebar-btn" id="btn-resume">' + T('再開する', 'Resume') + '</button>',
       '</div>',
+      '<div class="notice" id="notice-backup" role="region" aria-label="' + T('書き出しのお願い', 'Backup reminder') + '">',
+      '  <span class="notice-txt">💾 ' + T('メモをファイルに書き出しておきませんか？\nデータはこの端末の中だけにあるので、ブラウザのデータを消したり端末が壊れたりすると戻せません。', 'Would you like to export your memos to a file?\nYour data is only on this device, so it cannot be restored if browser data is cleared or the device breaks.') + '</span>',
+      '  <span class="notice-btns">',
+      '    <button class="notice-btn" id="btn-backup-now">' + T('書き出す', 'Export') + '</button>',
+      '    <button class="notice-btn" id="btn-backup-later">' + T('あとで', 'Later') + '</button>',
+      '  </span>',
+      '</div>',
+      '<div class="notice" id="notice-a2hs" role="region" aria-label="' + T('ホーム画面に追加のご案内', 'Add to Home Screen') + '">',
+      '  <span class="notice-txt">' + T('ホーム画面に追加すると、アプリのようにすぐ開けます。\n共有ボタンから「ホーム画面に追加」を選んでください。\nホーム画面から開く版は、Safariのタブとは保存場所が別です。先に追加してから使い始めると安心です。', 'Add this app to your Home Screen to open it like an app.\nTap the Share button and choose "Add to Home Screen".\nThe Home Screen version stores its data separately from Safari tabs, so it is best to add it before you start writing memos.') + '</span>',
+      '  <span class="notice-btns">',
+      '    <button class="notice-btn" id="btn-a2hs-ok">' + T('わかった', 'Got it') + '</button>',
+      '  </span>',
+      '</div>',
       '<input type="file" id="file-input" accept="application/json,.json" style="display:none">',
       '<div class="tabs" role="tablist" aria-label="' + T('表示する一覧', 'List to show') + '">',
       '  <button class="tab" id="tab-clips" role="tab" aria-controls="list"></button>',
@@ -1023,7 +1507,12 @@
       '    <span class="lbl-full">＋ ' + T('新しいメモ', 'New memo') + '</span>',
       '    <span class="lbl-min">＋ ' + T('メモ', 'Memo') + '</span>',
       '  </button>',
+      '  <button class="btn sub tplbtn" id="btn-tpl" aria-expanded="false" title="' + T('ひな形から新しいメモを作る（住所・あいさつ文など）', 'Add a memo from a template (address, greeting, etc.)') + '">',
+      '    <span class="lbl-full">📝 ' + T('ひな形', 'Templates') + '</span>',
+      '    <span class="lbl-min">📝 ' + T('ひな形', 'Temp.') + '</span>',
+      '  </button>',
       '  <select class="sortbox" id="sortbox" aria-label="' + T('並べ替え', 'Sort') + '" title="' + T('並べ替え（「自分の並び」以外では、ピン止めが一番上に来ます）', 'Sort (pinned items come first, except in My order)') + '"></select>',
+      '  <button class="fontbtn" id="btn-font">' + T('Aあ', 'Aa') + '</button>',
       '</div>',
       '<div class="searchbar" id="searchbar" role="search">',
       '  <input type="text" id="search-input" placeholder="' + T('さがす文字', 'Search text') + '" autocomplete="off" enterkeyhint="search" aria-label="' + T('さがす文字（いま見ている一覧をしぼりこむ）', 'Search text (filter the current list)') + '">',
@@ -1048,6 +1537,16 @@
     searchCountEl = shadow.getElementById('search-count');
     btnPauseEl = shadow.getElementById('btn-pause');
     pauseBarEl = shadow.getElementById('pausebar');
+    noticeBackupEl = shadow.getElementById('notice-backup');
+    noticeA2hsEl = shadow.getElementById('notice-a2hs');
+    btnTplEl = shadow.getElementById('btn-tpl');
+    btnFontEl = shadow.getElementById('btn-font');
+    btnFontEl.addEventListener('click', cycleFontSize);
+    btnTplEl.addEventListener('click', toggleTemplates);
+    shadow.getElementById('btn-backup-now').addEventListener('click', doExport);
+    shadow.getElementById('btn-backup-later').addEventListener('click', snoozeBackup);
+    shadow.getElementById('btn-a2hs-ok').addEventListener('click', dismissA2hs);
+    applyFontSize(fontSize);
 
     L.SORT_MODES.forEach(function (m) {
       var o = document.createElement('option');
@@ -1231,6 +1730,7 @@
       width: panelEl.style.width, height: panelEl.style.height
     };
     var wasVisible = visible;
+    stopSpeaking(true);
     clearTimeout(toastTimer);
     if (toastOnHide) { var f = toastOnHide; toastOnHide = null; try { f(); } catch (e) {} }
     try { if (host) host.remove(); } catch (e) {}
@@ -1296,6 +1796,7 @@
 
   function hidePanel() {
     savePanelStateNow();
+    stopSpeaking(true);
     var hadFocus = false;
     try { hadFocus = !!(shadow && shadow.activeElement); } catch (e) {}
     visible = false;
@@ -1385,7 +1886,11 @@
     listEl.setAttribute('aria-labelledby', currentTab === 'clips' ? 'tab-clips' : 'tab-memos');
     btnImportEl.style.display = currentTab === 'clips' ? '' : 'none';
     btnNewMemoEl.style.display = currentTab === 'memos' ? '' : 'none';
+    btnTplEl.style.display = currentTab === 'memos' ? '' : 'none';
+    btnTplEl.setAttribute('aria-expanded', templatesOpen && currentTab === 'memos' ? 'true' : 'false');
+    btnTplEl.classList.toggle('on', templatesOpen && currentTab === 'memos');
     sortBoxEl.value = sortMode[currentTab];
+    renderNotices();
 
     /* 記録の一時停止の帯とボタン */
     var showPaused = recordingPaused && !IS_WEB_APP;
@@ -1421,6 +1926,7 @@
     /* 編集中に元の項目が他所で消えても、下書きを守るため編集カードだけは出し続ける */
     var showOrphanEdit = editOnThisTab && !editTargetExists;
 
+    if (currentTab === 'memos' && templatesOpen) listEl.appendChild(buildTemplateBox());
     if (showComposer) listEl.appendChild(buildComposer());
     if (showOrphanEdit) listEl.appendChild(buildEditCard(null, kind));
 
@@ -1551,6 +2057,17 @@
     meta.appendChild(iconBtn('📋', T('クリップボードにコピー', 'Copy to clipboard'), function () {
       copyText(item.text);
     }, false, 'copy'));
+
+    /* 声で読み上げ(端末に声が入っているブラウザだけ出す)。もう一度押すと止まる */
+    if (ttsSupported()) {
+      var speaking = speakingId === item.id;
+      var sp = iconBtn(speaking ? '⏹' : '🔊',
+        T('声で読み上げる（もう一度押すと止まります）', 'Read aloud (press again to stop)'), function () {
+          toggleSpeak(item);
+        }, speaking, 'speak');
+      sp.setAttribute('aria-pressed', speaking ? 'true' : 'false');
+      meta.appendChild(sp);
+    }
 
     meta.appendChild(iconBtn('✏️', T('編集', 'Edit'), function () {
       startEdit(item, kind);
@@ -1717,6 +2234,11 @@
         }
       });
     } catch (e) {}
+  }
+
+  /* ページを離れるときは読み上げを止める(声だけ残らないように) */
+  if (IS_TOP) {
+    try { window.addEventListener('pagehide', function () { stopSpeaking(true); }); } catch (e) {}
   }
 
   /* ---------- panel.html(拡張ページ)では即表示 ---------- */
